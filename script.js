@@ -102,7 +102,7 @@ const movies = [
         title: "Amerika kapitány: Az első bosszúálló",
         description: "Amerika Kapitány szuperkatonává válik, és legyőzi a HYDRA vezetőjét, miközben megmenti a világot. Önfeláldozása után évtizedekkel később a modern korban ébred fel.",
         thumbnail: "assets/akelsobosszuallo.png",
-        isNew: true,
+        isNew: false,
         iframe: "https://videa.hu/player?v=gieXTQt3qIVhqxsW",
         year: "2011",
         age: "12+"
@@ -112,7 +112,7 @@ const movies = [
         title: "Amerika kapitány: Szép új világ",
         description: "Amerika Kapitány szuperkatonává válik, és legyőzi a HYDRA vezetőjét, miközben megmenti a világot. Önfeláldozása után évtizedekkel később a modern korban ébred fel.",
         thumbnail: "assets/akszepujvilag.png",
-        isNew: true,
+        isNew: false,
         iframe: "https://videa.hu/player?v=Ys4NCuliTxIzpdId",
         year: "2025",
         age: "12+"
@@ -122,7 +122,7 @@ const movies = [
         title: "Női szervek",
         description: "Az FBI-ügynök Sarah Ashburn és a bostoni rendőrnő Shannon Mullins teljesen különbözőek, ezért ki nem állhatják egymást. Egy veszélyes drogbáró elfogásához azonban össze kell fogniuk, és a közös nyomozás során megtanulják tisztelni egymást.",
         thumbnail: "assets/női_szervek.png",
-        isNew: true,
+        isNew: false,
         iframe: "https://videa.hu/player?v=4HSRvSpmcCE6fHZb",
         year: "2013",
         age: "16+"
@@ -175,6 +175,16 @@ const movies = [
         isNew: true,
         iframe: "https://videa.hu/player?v=RUnCkLkGwsoD0EHu",
         year: "2013",
+        age: "16+"
+    },
+    {
+        id: "movie17",
+        title: "A méhész",
+        description: "Clay egy titkos „Méhészek” nevű, a törvény felett álló kormányzati szervezetre dolgozott, amely a társadalom védelmét látja el. A bosszúhadjárat során egy szilícium-völgyi techcég és az amerikai elnök (Derek Danforth édesanyja) körüli összeesküvést derít fel.",
+        thumbnail: "assets/a_méhész.png",
+        isNew: true,
+        iframe: "https://videa.hu/player?v=oG0IsfSwwsqXwoa5",
+        year: "2024",
         age: "16+"
     },
 ];
