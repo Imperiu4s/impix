@@ -445,12 +445,6 @@ function renderHero(item) {
     }
 }
 
-function scrollRow(gridId, direction) {
-    const grid = document.getElementById(gridId);
-    if (!grid) return;
-    grid.scrollBy({ left: direction * grid.clientWidth * 0.85, behavior: 'smooth' });
-}
-
 function handleSearch() {
     const searchInput = document.getElementById('search-input');
     const clearBtn = document.getElementById('search-clear-btn');
@@ -649,6 +643,5 @@ window.handleSearch = handleSearch;
 window.clearSearch = clearSearch;
 window.selectSeason = selectSeason;
 window.toggleDropdown = toggleDropdown;
-window.scrollRow = scrollRow;
 window.playEpisode = playEpisode;
 initApp();
