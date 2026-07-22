@@ -177,15 +177,19 @@ body {
 	left: 16px;
 	top: 50%;
 	transform: translateY(-50%);
-	color: var(--text-dark-gray);
+	color: var(--nf-red);
+	opacity: 0.75;
 	pointer-events: none;
 }
 
-#password-input {
+#password-input,
+#admin-password-input {
+	appearance: none;
+	-webkit-appearance: none;
 	width: 100%;
 	padding: 16px 20px 16px 46px;
-	background: rgba(255, 255, 255, 0.06);
-	border: 1px solid rgba(255, 255, 255, 0.1);
+	background: rgba(var(--nf-red-rgb), 0.06);
+	border: 1px solid rgba(var(--nf-red-rgb), 0.3);
 	border-radius: var(--radius-md);
 	color: white;
 	font-size: 1rem;
@@ -195,10 +199,16 @@ body {
 	transition: all 0.25s ease;
 }
 
-#password-input:focus {
-	background: rgba(255, 255, 255, 0.1);
+#password-input::placeholder,
+#admin-password-input::placeholder {
+	color: var(--text-dark-gray);
+}
+
+#password-input:focus,
+#admin-password-input:focus {
+	background: rgba(var(--nf-red-rgb), 0.12);
 	border-color: var(--nf-red);
-	box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.15);
+	box-shadow: 0 0 0 3px rgba(var(--nf-red-rgb), 0.18);
 }
 
 .login-btn {
@@ -384,7 +394,7 @@ body {
 #search-input:focus {
 	background: rgba(127, 127, 127, 0.2);
 	border-color: var(--nf-red);
-	box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.15);
+	box-shadow: 0 0 0 3px rgba(var(--nf-red-rgb), 0.15);
 }
 
 .no-results {
@@ -512,7 +522,7 @@ body {
 	background: var(--nf-red);
 	color: #fff;
 	transform: scale(1.04);
-	box-shadow: 0 10px 25px rgba(229, 9, 20, 0.35);
+	box-shadow: 0 10px 25px rgba(var(--nf-red-rgb), 0.35);
 }
 
 

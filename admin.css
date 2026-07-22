@@ -1,6 +1,7 @@
-/* Az admin belépő kapu saját, arany akcentusú témát kap -- így prémium marad,
-   de vizuálisan is megkülönböztethető a VIP (piros) beléptetőtől. */
-#admin-gate {
+/* Az admin.html teljes egésze (belépő kapu ÉS a bejelentkezés utáni felület is)
+   saját, arany akcentusú témát kap -- így prémium marad, de vizuálisan is
+   megkülönböztethető a VIP (piros) oldaltól, végig konzisztensen. */
+:root {
 	--nf-red: #d4af37;
 	--nf-red-dark: #a6801f;
 	--nf-red-rgb: 212, 175, 55;
