@@ -51,6 +51,7 @@ function shuffleArray(array) {
 }
 
 let heroPicked = false;
+let currentSeasonIndex = 0;
 
 function refreshContent() {
     const newMovies = movies.filter(item => item.isNew === true);
@@ -70,15 +71,207 @@ function refreshContent() {
         renderHero(featured);
     }
 
+    renderPersonalRows();
+
     const searchInput = document.getElementById('search-input');
     if (searchInput && searchInput.value.trim() !== '') {
         handleSearch();
     }
 }
 
+// ============ FOLYTASD, AHOL ABBAHAGYTAD / KEDVENCEK / NÉZETTSÉG ============
+// Ezek a funkciók kizárólag a böngésző localStorage-át használják, nem kerülnek
+// Firebase-be -- eszközönként/böngészőnként külön él a folytatás és a kedvenclista.
+
+const CONTINUE_KEY = 'impix_continue';
+const FAVORITES_KEY = 'impix_favorites';
+const MAX_CONTINUE_ITEMS = 15;
+
+function getContinueList() {
+    try {
+        return JSON.parse(localStorage.getItem(CONTINUE_KEY)) || [];
+    } catch {
+        return [];
+    }
+}
+
+function recordContinueWatching(entry) {
+    let list = getContinueList().filter(c => c.id !== entry.id);
+    list.unshift({ ...entry, updatedAt: Date.now() });
+    if (list.length > MAX_CONTINUE_ITEMS) list = list.slice(0, MAX_CONTINUE_ITEMS);
+    localStorage.setItem(CONTINUE_KEY, JSON.stringify(list));
+    renderPersonalRows();
+}
+
+function removeContinueEntry(id) {
+    const list = getContinueList().filter(c => c.id !== id);
+    localStorage.setItem(CONTINUE_KEY, JSON.stringify(list));
+    renderPersonalRows();
+}
+window.removeContinueEntry = removeContinueEntry;
+
+function getFavorites() {
+    try {
+        return JSON.parse(localStorage.getItem(FAVORITES_KEY)) || [];
+    } catch {
+        return [];
+    }
+}
+
+function isFavorite(id) {
+    return getFavorites().some(f => f.id === id);
+}
+
+function toggleFavorite(id, type) {
+    let favs = getFavorites();
+    if (favs.some(f => f.id === id)) {
+        favs = favs.filter(f => f.id !== id);
+    } else {
+        favs.unshift({ id, type, addedAt: Date.now() });
+    }
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favs));
+
+    const active = isFavorite(id);
+    document.querySelectorAll(`[data-fav-id="${id}"]`).forEach(btn => {
+        btn.classList.toggle('active', active);
+        btn.textContent = btn.classList.contains('modal-fav-btn')
+            ? (active ? '♥ Kedvenc' : '♡ Kedvencekhez')
+            : (active ? '♥' : '♡');
+    });
+
+    renderPersonalRows();
+}
+window.toggleFavorite = toggleFavorite;
+
+function updateModalFavButton(id, type) {
+    const btn = document.getElementById('modal-fav-btn');
+    if (!btn) return;
+    const active = isFavorite(id);
+    btn.classList.toggle('active', active);
+    btn.textContent = active ? '♥ Kedvenc' : '♡ Kedvencekhez';
+    btn.dataset.favId = id;
+    btn.dataset.favType = type;
+    btn.onclick = () => toggleFavorite(id, type);
+}
+
+function incrementViews(item, type) {
+    if (!item || !item.id) return;
+    const path = `content/${type === 'movie' ? 'movies' : 'series'}/${item.id}`;
+    const newViews = (item.views || 0) + 1;
+    item.views = newViews;
+    update(ref(database, path), { views: newViews }).catch(err => {
+        console.error('Nézettség frissítési hiba:', err);
+    });
+}
+
+function resumeItem(entry) {
+    const source = entry.type === 'series' ? series : movies;
+    const item = source.find(i => i.id === entry.id);
+    if (!item) {
+        removeContinueEntry(entry.id);
+        return;
+    }
+    if (entry.type === 'series') {
+        openModal(item, 'series', { seasonIndex: entry.seasonIndex, episodeIndex: entry.episodeIndex });
+    } else {
+        openModal(item, 'movie');
+    }
+}
+
+function renderPersonalRows() {
+    renderContinueRow();
+    renderFavoritesRow();
+    renderMostViewed();
+}
+
+function renderContinueRow() {
+    const section = document.getElementById('continue-section');
+    if (!section) return;
+
+    const entries = getContinueList();
+    const paired = entries
+        .map(entry => {
+            const source = entry.type === 'series' ? series : movies;
+            const item = source.find(i => i.id === entry.id);
+            return item ? { item, entry } : null;
+        })
+        .filter(Boolean);
+
+    if (paired.length === 0) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+
+    renderGrid(paired.map(p => p.item), 'continue-grid', 'movie', {
+        getSubtitle: (item) => {
+            const pair = paired.find(p => p.item.id === item.id);
+            const entry = pair && pair.entry;
+            if (entry && entry.type === 'series' && item.seasons && item.seasons[entry.seasonIndex]) {
+                const season = item.seasons[entry.seasonIndex];
+                const ep = season.episodes[entry.episodeIndex];
+                return `${season.season}. évad${ep ? ' – ' + ep.title : ''}`;
+            }
+            return null;
+        },
+        showRemove: true,
+        onOpen: (item) => {
+            const pair = paired.find(p => p.item.id === item.id);
+            if (pair) resumeItem(pair.entry);
+        }
+    });
+}
+
+function renderFavoritesRow() {
+    const section = document.getElementById('favorites-section');
+    if (!section) return;
+
+    const favs = getFavorites();
+    const items = favs
+        .map(f => (f.type === 'series' ? series : movies).find(i => i.id === f.id))
+        .filter(Boolean);
+
+    if (items.length === 0) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+    renderGrid(items, 'favorites-grid', 'movie');
+}
+
+function renderMostViewed() {
+    const section = document.getElementById('most-viewed-section');
+    if (!section) return;
+
+    const combined = [...movies, ...series];
+    const sorted = combined
+        .filter(i => (i.views || 0) > 0)
+        .sort((a, b) => (b.views || 0) - (a.views || 0))
+        .slice(0, 10);
+
+    if (sorted.length === 0) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+    renderGrid(sorted, 'most-viewed-grid', 'movie', { showViews: true });
+}
+
+function renderSkeletonGrid(gridId, count = 6) {
+    const grid = document.getElementById(gridId);
+    if (!grid) return;
+    grid.innerHTML = Array.from({ length: count }).map(() => '<div class="skeleton-card"></div>').join('');
+}
+
 function initApp() {
     checkSessionAndPassword();
     setInterval(checkSessionAndPassword, 10000);
+
+    // Amíg a Firebase válasza megérkezik, ne üres rács villanjon, hanem egy pár
+    // lüktető helykitöltő kártya (skeleton) jelezze, hogy töltés van folyamatban.
+    renderSkeletonGrid('new-releases-grid', 6);
+    renderSkeletonGrid('movie-grid', 8);
+    renderSkeletonGrid('series-grid', 8);
 
     // Élő adatbázis-figyelés: az admin felületen végzett módosítások azonnal
     // megjelennek minden nyitott oldalon, kód-módosítás és újratöltés nélkül.
@@ -97,6 +290,19 @@ function initApp() {
     document.addEventListener('contextmenu', e => e.preventDefault());
 
     document.addEventListener('keydown', function (e) {
+        if (e.key === "Escape") {
+            const alertOverlay = document.getElementById('impix-alert');
+            const alertBtn = document.getElementById('impix-alert-btn');
+            if (alertOverlay && alertOverlay.classList.contains('active') && alertBtn) {
+                alertBtn.click();
+                return;
+            }
+            if (modal && !modal.classList.contains('hidden')) {
+                closeModal();
+                return;
+            }
+        }
+
         if (e.key === "F12" || e.keyCode === 123) {
             e.preventDefault();
             return false;
@@ -398,7 +604,7 @@ function handleLogout() {
     });
 }
 
-function renderGrid(data, gridId, type) {
+function renderGrid(data, gridId, type, options = {}) {
     const grid = document.getElementById(gridId);
     grid.innerHTML = '';
 
@@ -410,21 +616,33 @@ function renderGrid(data, gridId, type) {
     data.forEach(item => {
         const div = document.createElement('div');
         div.className = 'card';
+        const actualType = item.seasons ? 'series' : type;
+        const fav = isFavorite(item.id);
+        const subtitle = options.getSubtitle ? options.getSubtitle(item) : null;
+
         div.innerHTML = `
             <div class="card-bg" style="background-image: url('${item.thumbnail}');"></div>
             ${item.isNew ? '<span class="card-badge-new">Új</span>' : ''}
-            <span class="card-badge-hd">HD</span>
+            <button class="card-fav-btn${fav ? ' active' : ''}" data-fav-id="${item.id}" onclick="event.stopPropagation(); toggleFavorite('${item.id}', '${actualType}')">${fav ? '♥' : '♡'}</button>
+            ${options.showRemove ? `<button class="card-remove-btn" onclick="event.stopPropagation(); removeContinueEntry('${item.id}')" title="Eltávolítás">✕</button>` : ''}
             <div class="card-desc">
                 <div class="card-title-text">${item.title}</div>
                 <div class="card-meta-text">
                     <span style="color: #d34646">${item.year}</span>
                     <span class="age-tag">${item.age}</span>
+                    ${options.showViews ? `<span class="card-views">👁 ${(item.views || 0).toLocaleString('hu-HU')}</span>` : ''}
                 </div>
+                ${subtitle ? `<div class="card-sub-label">${subtitle}</div>` : ''}
             </div>
         `;
-        const actualType = item.seasons ? 'series' : type;
 
-        div.onclick = () => openModal(item, actualType);
+        div.onclick = () => {
+            if (options.onOpen) {
+                options.onOpen(item, actualType);
+            } else {
+                openModal(item, actualType);
+            }
+        };
         grid.appendChild(div);
     });
 }
@@ -499,18 +717,21 @@ function selectSeason(seasonIndex) {
     const selectedSeason = window.currentActiveSeries.seasons[seasonIndex];
 
     if (selectedSeason) {
+        currentSeasonIndex = seasonIndex;
         if (label) label.innerText = `${selectedSeason.season}. Évad`;
 
         if (selectedSeason.episodes.length > 0) {
             updateEpisodeList(selectedSeason.episodes);
             player.src = selectedSeason.episodes[0].iframe;
+            recordContinueWatching({ id: window.currentActiveSeries.id, type: 'series', seasonIndex, episodeIndex: 0 });
+            incrementViews(window.currentActiveSeries, 'series');
         }
     }
 
     if (dropdown) dropdown.classList.remove('active');
 }
 
-function openModal(item, type) {
+function openModal(item, type, resume = null) {
     modal.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
 
@@ -518,6 +739,7 @@ function openModal(item, type) {
     document.getElementById('modal-year').innerText = item.year;
     document.getElementById('modal-age').innerText = item.age;
     document.getElementById('modal-description').innerText = item.description;
+    updateModalFavButton(item.id, type);
 
     const mainContent = document.getElementById('main-content');
     if (mainContent) {
@@ -532,10 +754,15 @@ function openModal(item, type) {
         epList.style.display = 'flex';
         window.currentActiveSeries = item;
 
+        const seasonIndex = resume && item.seasons[resume.seasonIndex] ? resume.seasonIndex : 0;
+        currentSeasonIndex = seasonIndex;
+        const season = item.seasons[seasonIndex];
+        const episodeIndex = resume && season.episodes[resume.episodeIndex] ? resume.episodeIndex : 0;
+
         selectorBox.innerHTML = `
             <div class="custom-dropdown" id="season-dropdown">
                 <div class="dropdown-trigger" onclick="toggleDropdown(event)">
-                    <span id="selected-season-label">${item.seasons[0].season}. Évad</span>
+                    <span id="selected-season-label">${season.season}. Évad</span>
                     <span class="dropdown-arrow">▼</span>
                 </div>
                 <ul class="dropdown-menu">
@@ -546,29 +773,38 @@ function openModal(item, type) {
             </div>
         `;
 
-        updateEpisodeList(item.seasons[0].episodes);
-        player.src = item.seasons[0].episodes[0].iframe;
+        updateEpisodeList(season.episodes, episodeIndex);
+        player.src = season.episodes[episodeIndex].iframe;
+        recordContinueWatching({ id: item.id, type: 'series', seasonIndex, episodeIndex });
+        incrementViews(item, 'series');
     } else {
         selectorBox.style.display = 'none';
         epList.style.display = 'none';
         player.src = item.iframe;
+        recordContinueWatching({ id: item.id, type: 'movie' });
+        incrementViews(item, 'movie');
     }
 }
 
-function updateEpisodeList(episodes) {
+function updateEpisodeList(episodes, activeIndex = 0) {
     const listContainer = document.getElementById('ep-list');
     listContainer.innerHTML = episodes.map((ep, i) => `
-        <div class="ep-item${i === 0 ? ' active' : ''}" onclick="playEpisode(this, '${ep.iframe}')">
+        <div class="ep-item${i === activeIndex ? ' active' : ''}" onclick="playEpisode(this, '${ep.iframe}', ${i})">
             <span>${ep.title}</span>
             <span class="ep-item-icon">▶</span>
         </div>
     `).join('');
 }
 
-function playEpisode(el, src) {
+function playEpisode(el, src, epIndex) {
     player.src = src;
     document.querySelectorAll('#ep-list .ep-item').forEach(item => item.classList.remove('active'));
     el.classList.add('active');
+
+    if (window.currentActiveSeries) {
+        recordContinueWatching({ id: window.currentActiveSeries.id, type: 'series', seasonIndex: currentSeasonIndex, episodeIndex: epIndex });
+        incrementViews(window.currentActiveSeries, 'series');
+    }
 }
 
 function closeModal() {
@@ -644,4 +880,13 @@ window.clearSearch = clearSearch;
 window.selectSeason = selectSeason;
 window.toggleDropdown = toggleDropdown;
 window.playEpisode = playEpisode;
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(err => {
+            console.error('Service worker regisztráció sikertelen:', err);
+        });
+    });
+}
+
 initApp();

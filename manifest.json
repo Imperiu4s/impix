@@ -1,0 +1,14 @@
+{
+    "name": "Impix – Streaming Platform",
+    "short_name": "Impix",
+    "description": "Válogatott filmek és sorozatok, egy helyen.",
+    "start_url": "./index.html",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#0a0a0c",
+    "theme_color": "#0a0a0c",
+    "icons": [
+        { "src": "assets/impixlogo.png", "sizes": "any", "type": "image/png", "purpose": "any" },
+        { "src": "impixlogo.ico", "sizes": "any", "type": "image/x-icon" }
+    ]
+}

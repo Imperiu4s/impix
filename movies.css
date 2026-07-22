@@ -22,6 +22,7 @@
 
 	--nf-red: #e50914;
 	--nf-red-dark: #b30000;
+	--nf-red-rgb: 229, 9, 20;
 	--nf-none: #808080;
 
 	--shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.35);
@@ -29,6 +30,8 @@
 	--radius-lg: 14px;
 	--radius-md: 8px;
 	--font-main: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+	--login-bg-tint: #1a0506;
+	--card-height: 320px;
 }
 
 body.light-theme {
@@ -114,9 +117,9 @@ body {
 	align-items: center;
 	z-index: 100000;
 	background:
-		radial-gradient(circle at 18% 20%, rgba(229, 9, 20, 0.16), transparent 45%),
-		radial-gradient(circle at 82% 78%, rgba(229, 9, 20, 0.12), transparent 50%),
-		linear-gradient(160deg, #0a0a0c 0%, #1a0506 55%, #0a0a0c 100%);
+		radial-gradient(circle at 18% 20%, rgba(var(--nf-red-rgb), 0.16), transparent 45%),
+		radial-gradient(circle at 82% 78%, rgba(var(--nf-red-rgb), 0.12), transparent 50%),
+		linear-gradient(160deg, #0a0a0c 0%, var(--login-bg-tint) 55%, #0a0a0c 100%);
 	backdrop-filter: blur(15px) !important;
 	-webkit-backdrop-filter: blur(15px) !important;
 	transition: opacity 0.3s ease;
@@ -529,7 +532,7 @@ body {
 	position: relative;
 	cursor: pointer;
 	width: 100%;
-	height: 320px;
+	height: var(--card-height);
 	border-radius: var(--radius-md);
 	overflow: hidden;
 	background: var(--bg-card);
@@ -538,6 +541,25 @@ body {
 	will-change: transform;
 	transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s;
 	animation: cardFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.skeleton-card {
+	width: 100%;
+	height: var(--card-height);
+	border-radius: var(--radius-md);
+	background: linear-gradient(100deg, var(--bg-card) 30%, var(--bg-card-hover) 50%, var(--bg-card) 70%);
+	background-size: 200% 100%;
+	animation: skeletonShimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeletonShimmer {
+	0% {
+		background-position: 200% 0;
+	}
+
+	100% {
+		background-position: -200% 0;
+	}
 }
 
 @keyframes cardFadeIn {
@@ -618,19 +640,63 @@ body {
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
-.card-badge-hd {
+.card-fav-btn {
 	position: absolute;
 	top: 10px;
 	right: 10px;
+	width: 32px;
+	height: 32px;
+	border-radius: 50%;
 	background: rgba(0, 0, 0, 0.55);
-	color: #fff;
-	font-size: 0.62rem;
-	font-weight: 700;
-	padding: 3px 7px;
-	border-radius: 4px;
 	border: 1px solid rgba(255, 255, 255, 0.25);
+	color: #fff;
+	font-size: 1.05rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	z-index: 5;
 	backdrop-filter: blur(4px);
-	z-index: 4;
+	transition: all 0.2s ease;
+	padding: 0;
+	line-height: 1;
+}
+
+.card-fav-btn:hover {
+	background: var(--nf-red);
+	border-color: var(--nf-red);
+	transform: scale(1.1);
+}
+
+.card-fav-btn.active {
+	color: var(--nf-red);
+	background: rgba(0, 0, 0, 0.75);
+}
+
+.card-remove-btn {
+	position: absolute;
+	top: 48px;
+	right: 10px;
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.55);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	color: #fff;
+	font-size: 0.8rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	z-index: 5;
+	padding: 0;
+	line-height: 1;
+	transition: all 0.2s ease;
+}
+
+.card-remove-btn:hover {
+	background: #8f0000;
+	border-color: #8f0000;
 }
 
 body.light-theme .card-desc {
@@ -675,6 +741,22 @@ body.light-theme .card-desc {
 	border-radius: 3px;
 	font-weight: bold;
 	color: var(--text-muted);
+}
+
+.card-sub-label {
+	font-size: 0.78rem;
+	color: var(--nf-red);
+	font-weight: 600;
+	margin-top: 6px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.card-views {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
 }
 
 
@@ -826,11 +908,40 @@ body.light-theme .video-gradient-bottom {
 	min-width: 0;
 }
 
+.modal-title-row {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+}
+
 .movie-main-title {
 	font-size: 2.4rem;
 	margin: 0;
 	font-weight: 800;
 	letter-spacing: -0.5px;
+}
+
+.modal-fav-btn {
+	background: var(--bg-select);
+	border: 1px solid var(--border-color);
+	color: var(--text-main);
+	padding: 10px 18px;
+	border-radius: var(--radius-md);
+	font-family: inherit;
+	font-weight: 700;
+	font-size: 0.9rem;
+	cursor: pointer;
+	white-space: nowrap;
+	flex-shrink: 0;
+	transition: all 0.2s ease;
+}
+
+.modal-fav-btn:hover,
+.modal-fav-btn.active {
+	background: var(--nf-red);
+	border-color: var(--nf-red);
+	color: #fff;
 }
 
 .movie-meta-tags {
@@ -1229,11 +1340,7 @@ body.light-theme .dropdown-menu {
 	.grid {
 		grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
 		gap: 14px;
-	}
-
-	.card {
-		width: 100%;
-		height: 220px;
+		--card-height: 220px;
 	}
 
 	.login-box {
@@ -1261,10 +1368,6 @@ body.light-theme .dropdown-menu {
 	.grid {
 		grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
 		gap: 10px;
-	}
-
-	.card {
-		width: 100%;
-		height: 190px;
+		--card-height: 190px;
 	}
 }

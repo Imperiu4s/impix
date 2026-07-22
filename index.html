@@ -4,7 +4,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Impix – válogatott filmek és sorozatok, egy helyen. Az Imperiussss Community VIP streaming platformja.">
+    <meta name="theme-color" content="#0a0a0c">
     <link rel="icon" type="image/x-icon" href="impixlogo.ico">
+    <link rel="manifest" href="manifest.json">
+
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Impix">
+    <meta property="og:title" content="Impix | impix.hu">
+    <meta property="og:description" content="Válogatott filmek és sorozatok, egy helyen. Az Imperiussss Community VIP streaming platformja.">
+    <meta property="og:image" content="https://impix.hu/assets/impixlogo2.png">
+    <meta property="og:url" content="https://impix.hu">
+    <meta name="twitter:card" content="summary_large_image">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -71,6 +82,21 @@
     </section>
 
     <main class="container" id="main-content">
+        <section class="section-group hidden" id="continue-section">
+            <h2 class="category-title">Folytasd, ahol abbahagytad</h2>
+            <div id="continue-grid" class="grid"></div>
+        </section>
+
+        <section class="section-group hidden" id="favorites-section">
+            <h2 class="category-title">Kedvenceim</h2>
+            <div id="favorites-grid" class="grid"></div>
+        </section>
+
+        <section class="section-group hidden" id="most-viewed-section">
+            <h2 class="category-title">Legnézettebbek</h2>
+            <div id="most-viewed-grid" class="grid"></div>
+        </section>
+
         <section class="section-group">
             <h2 class="category-title">Újdonságok az Impixen</h2>
             <div id="new-releases-grid" class="grid"></div>
@@ -111,7 +137,10 @@
 
             <div class="modal-body-content">
                 <div class="info-left-side">
-                    <h2 id="modal-title" class="movie-main-title"></h2>
+                    <div class="modal-title-row">
+                        <h2 id="modal-title" class="movie-main-title"></h2>
+                        <button id="modal-fav-btn" class="modal-fav-btn">♡ Kedvencekhez</button>
+                    </div>
                     <div class="movie-meta-tags">
                         <span id="modal-year" class="meta-tag-year">2024</span>
                         <span id="modal-age" class="meta-tag-age">16+</span>

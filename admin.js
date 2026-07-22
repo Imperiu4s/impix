@@ -142,7 +142,7 @@ async function handleMovieSubmit(e) {
             await update(ref(database, 'content/movies/' + editId), movieData);
             setStatus('movie-form-status', 'Film frissítve!', 'success');
         } else {
-            await push(ref(database, 'content/movies'), movieData);
+            await push(ref(database, 'content/movies'), { ...movieData, views: 0 });
             setStatus('movie-form-status', 'Film hozzáadva!', 'success');
         }
 
@@ -202,6 +202,7 @@ function renderMoviesList() {
                 <div class="admin-item-meta">
                     <span>${item.year}</span>
                     <span>${item.age}</span>
+                    <span>👁 ${(item.views || 0).toLocaleString('hu-HU')}</span>
                     ${item.isNew ? '<span>Újdonság</span>' : ''}
                 </div>
             </div>
@@ -241,7 +242,7 @@ async function handleSeriesSubmit(e) {
             await update(ref(database, 'content/series/' + editId), baseData);
             setStatus('series-form-status', 'Sorozat frissítve!', 'success');
         } else {
-            await push(ref(database, 'content/series'), { ...baseData, seasons: [{ season: 1, episodes: [] }] });
+            await push(ref(database, 'content/series'), { ...baseData, views: 0, seasons: [{ season: 1, episodes: [] }] });
             setStatus('series-form-status', 'Sorozat hozzáadva! Most add hozzá az epizódokat lentebb.', 'success');
         }
 
@@ -387,6 +388,7 @@ function renderSeriesList() {
                             <span>${item.year}</span>
                             <span>${item.age}</span>
                             <span>${seasons.length} évad</span>
+                            <span>👁 ${(item.views || 0).toLocaleString('hu-HU')}</span>
                             ${item.isNew ? '<span>Újdonság</span>' : ''}
                         </div>
                     </div>

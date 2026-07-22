@@ -1,3 +1,38 @@
+/* Az admin belépő kapu saját, arany akcentusú témát kap -- így prémium marad,
+   de vizuálisan is megkülönböztethető a VIP (piros) beléptetőtől. */
+#admin-gate {
+	--nf-red: #d4af37;
+	--nf-red-dark: #a6801f;
+	--nf-red-rgb: 212, 175, 55;
+	--login-bg-tint: #1a1206;
+}
+
+.admin-shield-icon {
+	width: 56px;
+	height: 56px;
+	border-radius: 50%;
+	background: rgba(212, 175, 55, 0.12);
+	border: 1px solid rgba(212, 175, 55, 0.4);
+	color: #d4af37;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin: 0 auto 18px;
+}
+
+.admin-pill {
+	display: inline-block;
+	background: rgba(212, 175, 55, 0.12);
+	border: 1px solid rgba(212, 175, 55, 0.35);
+	color: #d4af37;
+	font-size: 0.72rem;
+	font-weight: 800;
+	letter-spacing: 1px;
+	padding: 5px 14px;
+	border-radius: 20px;
+	margin: 0 0 26px;
+}
+
 .admin-nav-title {
 	font-weight: 700;
 	color: var(--text-dark-gray);
