@@ -397,6 +397,11 @@ function initApp() {
     renderGrid(movies, 'movie-grid', 'movie');
     renderGrid(series, 'series-grid', 'series');
 
+    if (allNewReleases.length > 0) {
+        const featured = allNewReleases[Math.floor(Math.random() * allNewReleases.length)];
+        renderHero(featured);
+    }
+
     document.addEventListener('contextmenu', e => e.preventDefault());
 
     document.addEventListener('keydown', function (e) {
@@ -715,6 +720,8 @@ function renderGrid(data, gridId, type) {
         div.className = 'card';
         div.innerHTML = `
             <div class="card-bg" style="background-image: url('${item.thumbnail}');"></div>
+            ${item.isNew ? '<span class="card-badge-new">Új</span>' : ''}
+            <span class="card-badge-hd">HD</span>
             <div class="card-desc">
                 <div class="card-title-text">${item.title}</div>
                 <div class="card-meta-text">
@@ -728,6 +735,28 @@ function renderGrid(data, gridId, type) {
         div.onclick = () => openModal(item, actualType);
         grid.appendChild(div);
     });
+}
+
+function renderHero(item) {
+    const hero = document.getElementById('hero-section');
+    if (!hero || !item) return;
+
+    hero.style.backgroundImage = `url('${item.thumbnail}')`;
+    document.getElementById('hero-title').innerText = item.title;
+    document.getElementById('hero-desc').innerText = item.description;
+    document.getElementById('hero-year').innerText = item.year;
+    document.getElementById('hero-age').innerText = item.age;
+
+    const heroPlayBtn = document.getElementById('hero-play-btn');
+    if (heroPlayBtn) {
+        heroPlayBtn.onclick = () => openModal(item, item.seasons ? 'series' : 'movie');
+    }
+}
+
+function scrollRow(gridId, direction) {
+    const grid = document.getElementById(gridId);
+    if (!grid) return;
+    grid.scrollBy({ left: direction * grid.clientWidth * 0.85, behavior: 'smooth' });
 }
 
 function handleSearch() {
@@ -842,12 +871,18 @@ function openModal(item, type) {
 
 function updateEpisodeList(episodes) {
     const listContainer = document.getElementById('ep-list');
-    listContainer.innerHTML = episodes.map(ep => `
-        <div class="ep-item" onclick="player.src='${ep.iframe}'">
+    listContainer.innerHTML = episodes.map((ep, i) => `
+        <div class="ep-item${i === 0 ? ' active' : ''}" onclick="playEpisode(this, '${ep.iframe}')">
             <span>${ep.title}</span>
-            <span style="color: #E50914; font-size: 0.9rem;">▶</span>
+            <span class="ep-item-icon">▶</span>
         </div>
     `).join('');
+}
+
+function playEpisode(el, src) {
+    player.src = src;
+    document.querySelectorAll('#ep-list .ep-item').forEach(item => item.classList.remove('active'));
+    el.classList.add('active');
 }
 
 function closeModal() {
@@ -922,4 +957,6 @@ window.handleSearch = handleSearch;
 window.clearSearch = clearSearch;
 window.selectSeason = selectSeason;
 window.toggleDropdown = toggleDropdown;
+window.scrollRow = scrollRow;
+window.playEpisode = playEpisode;
 initApp();
