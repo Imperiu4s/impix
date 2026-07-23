@@ -263,7 +263,60 @@ function renderSkeletonGrid(gridId, count = 6) {
     grid.innerHTML = Array.from({ length: count }).map(() => '<div class="skeleton-card"></div>').join('');
 }
 
+// ============ HIRDETÉSBLOKKOLÓ ÉSZLELÉSE ============
+// Egy klasszikus "csali" elemet helyezünk el, amit a népszerű reklámblokkolók (uBlock
+// Origin, AdBlock stb.) a szűrőlistáik alapján automatikusan elrejtenek. Ha ezt észleljük,
+// blokkoljuk az oldalt egy figyelmeztetéssel, amíg a látogató ki nem kapcsolja azt.
+
+let adblockPreviousOverflow = null;
+
+function checkAdblock() {
+    const bait = document.getElementById('ad-banner');
+    const overlay = document.getElementById('adblock-overlay');
+    if (!bait || !overlay) return;
+
+    setTimeout(() => {
+        const style = getComputedStyle(bait);
+        const isBlocked = bait.offsetHeight === 0 || style.display === 'none' || style.visibility === 'hidden';
+
+        if (isBlocked) {
+            if (adblockPreviousOverflow === null) {
+                adblockPreviousOverflow = document.body.style.overflow;
+            }
+            overlay.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        } else {
+            overlay.classList.add('hidden');
+            if (adblockPreviousOverflow !== null) {
+                document.body.style.overflow = adblockPreviousOverflow;
+                adblockPreviousOverflow = null;
+            }
+        }
+    }, 150);
+}
+
+function recheckAdblock() {
+    checkAdblock();
+}
+window.recheckAdblock = recheckAdblock;
+
+function initAdblockCheck() {
+    checkAdblock();
+
+    const interval = setInterval(() => {
+        checkAdblock();
+        const overlay = document.getElementById('adblock-overlay');
+        if (overlay && overlay.classList.contains('hidden')) {
+            clearInterval(interval);
+        }
+    }, 3000);
+
+    window.addEventListener('focus', checkAdblock);
+}
+
 function initApp() {
+    initAdblockCheck();
+
     checkSessionAndPassword();
     setInterval(checkSessionAndPassword, 10000);
 

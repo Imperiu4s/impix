@@ -21,12 +21,30 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="movies.css?v=4">
-    <script type="module" src="script.js?v=4"></script>
+    <link rel="stylesheet" href="movies.css?v=5">
+    <script type="module" src="script.js?v=5"></script>
     <title>Impix | impix.hu</title>
 </head>
 
 <body>
+
+    <div id="ad-banner" class="ads ad-placement adsbygoogle" aria-hidden="true" style="position:absolute; top:-9999px; left:-9999px; width:1px; height:1px;"></div>
+
+    <div id="adblock-overlay" class="login-overlay hidden">
+        <div class="login-box">
+            <div class="overlay-icon">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="4.9" y1="4.9" x2="19.1" y2="19.1"></line>
+                </svg>
+            </div>
+            <h1 class="login-logo">IMPIX</h1>
+            <span class="overlay-pill">HIRDETÉSBLOKKOLÓ ÉSZLELVE</span>
+            <h2>Kapcsold ki a folytatáshoz</h2>
+            <p>A zökkenőmentes működéshez és lejátszáshoz kérjük, kapcsold ki a hirdetésblokkolót (AdBlock, uBlock Origin, Brave Shields stb.) ehhez az oldalhoz, majd próbáld újra.</p>
+            <button class="login-btn" onclick="recheckAdblock()">Ellenőrzés újra</button>
+        </div>
+    </div>
 
     <div id="login-gate" class="login-overlay">
         <div class="login-box">
@@ -132,7 +150,7 @@
             </div>
 
             <div class="video-container" id="video-container">
-                <iframe id="player" class="player-frame" src="" allowfullscreen></iframe>
+                <iframe id="player" class="player-frame" src="" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
                 <div id="video-shield" class="player-protected-overlay"></div>
                 <div class="video-gradient-bottom"></div>
             </div>

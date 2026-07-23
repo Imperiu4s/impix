@@ -156,6 +156,42 @@ body {
 	margin: 0 0 28px 0;
 }
 
+.overlay-icon {
+	width: 56px;
+	height: 56px;
+	border-radius: 50%;
+	background: rgba(var(--nf-red-rgb), 0.12);
+	border: 1px solid rgba(var(--nf-red-rgb), 0.4);
+	color: var(--nf-red);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin: 0 auto 18px;
+}
+
+.overlay-pill {
+	display: inline-block;
+	background: rgba(var(--nf-red-rgb), 0.12);
+	border: 1px solid rgba(var(--nf-red-rgb), 0.35);
+	color: var(--nf-red);
+	font-size: 0.72rem;
+	font-weight: 800;
+	letter-spacing: 1px;
+	padding: 5px 14px;
+	border-radius: 20px;
+	margin: 0 0 22px;
+}
+
+/* Az ablokkoló-figyelmeztetés saját, borostyánsárga témát kap -- így elüljön mind a
+   VIP (piros), mind az admin (arany) felülettől, de ugyanolyan prémium marad. */
+#adblock-overlay {
+	--nf-red: #f5a623;
+	--nf-red-dark: #c98614;
+	--nf-red-rgb: 245, 166, 35;
+	--login-bg-tint: #1a1503;
+	z-index: 200000;
+}
+
 .login-box h2 {
 	margin: 0 0 20px 0;
 	font-size: 1.7rem;

@@ -25,6 +25,27 @@ let moviesCache = {};
 let seriesCache = {};
 let suggestionsCache = {};
 
+// Videa.hu linket változatlanul hagyjuk, YouTube linket (bármilyen formátumban)
+// automatikusan a beágyazható /embed/ formára alakítunk, hogy a lejátszó iframe működjön.
+function normalizeVideoUrl(url) {
+    const trimmed = (url || '').trim();
+    if (!trimmed) return trimmed;
+
+    const patterns = [
+        /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+        /youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
+        /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
+        /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/
+    ];
+
+    for (const pattern of patterns) {
+        const match = trimmed.match(pattern);
+        if (match) return `https://www.youtube.com/embed/${match[1]}`;
+    }
+
+    return trimmed;
+}
+
 function checkAdminPassword() {
     const input = document.getElementById('admin-password-input');
     const errorMsg = document.getElementById('admin-error-msg');
@@ -138,7 +159,7 @@ async function handleMovieSubmit(e) {
             title: document.getElementById('movie-title').value.trim(),
             year: document.getElementById('movie-year').value.trim(),
             age: document.getElementById('movie-age').value.trim(),
-            iframe: document.getElementById('movie-iframe').value.trim(),
+            iframe: normalizeVideoUrl(document.getElementById('movie-iframe').value),
             description: document.getElementById('movie-desc').value.trim(),
             thumbnail,
             isNew: document.getElementById('movie-isnew').checked
@@ -323,10 +344,10 @@ async function addEpisode(id, seasonIndex) {
     const titleInput = document.getElementById(`ep-title-${id}-${seasonIndex}`);
     const iframeInput = document.getElementById(`ep-iframe-${id}-${seasonIndex}`);
     const title = titleInput.value.trim();
-    const iframe = iframeInput.value.trim();
+    const iframe = normalizeVideoUrl(iframeInput.value);
 
     if (!title || !iframe) {
-        alert('Add meg az epizód címét és a videa.hu embed linket is.');
+        alert('Add meg az epizód címét és a videa.hu / YouTube linket is.');
         return;
     }
 
@@ -378,7 +399,7 @@ function renderSeriesList() {
                 `).join('') || '<p class="admin-empty-note" style="padding:8px 0;">Nincs még epizód ebben az évadban.</p>'}
                 <div class="admin-add-episode">
                     <input type="text" id="ep-title-${id}-${si}" placeholder="Epizód címe, pl. 1. rész">
-                    <input type="text" id="ep-iframe-${id}-${si}" placeholder="Videa.hu embed link">
+                    <input type="text" id="ep-iframe-${id}-${si}" placeholder="Videa.hu vagy YouTube link">
                     <button data-action="add-episode" data-id="${id}" data-season="${si}">+ Epizód</button>
                 </div>
             </div>
