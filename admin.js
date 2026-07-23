@@ -23,6 +23,7 @@ const ADMIN_PASSWORD = "ImpixAdmin2026!";
 
 let moviesCache = {};
 let seriesCache = {};
+let suggestionsCache = {};
 
 function checkAdminPassword() {
     const input = document.getElementById('admin-password-input');
@@ -74,6 +75,11 @@ function initAdmin() {
         renderSeriesList();
         checkImportBanner();
     });
+
+    onValue(ref(database, 'suggestions'), (snapshot) => {
+        suggestionsCache = snapshot.val() || {};
+        renderSuggestionsList();
+    });
 }
 
 function checkImportBanner() {
@@ -83,10 +89,10 @@ function checkImportBanner() {
 }
 
 function switchTab(tab) {
-    document.getElementById('tab-movies').classList.toggle('hidden', tab !== 'movies');
-    document.getElementById('tab-series').classList.toggle('hidden', tab !== 'series');
-    document.getElementById('tab-btn-movies').classList.toggle('active', tab === 'movies');
-    document.getElementById('tab-btn-series').classList.toggle('active', tab === 'series');
+    ['movies', 'series', 'suggestions'].forEach(t => {
+        document.getElementById('tab-' + t).classList.toggle('hidden', t !== tab);
+        document.getElementById('tab-btn-' + t).classList.toggle('active', t === tab);
+    });
 }
 
 function setStatus(elId, message, type) {
@@ -407,6 +413,64 @@ function renderSeriesList() {
     }).join('');
 }
 
+// ============ FILMAJÁNLÁSOK ============
+
+async function acceptSuggestion(id) {
+    await update(ref(database, 'suggestions/' + id), { status: 'accepted' });
+}
+
+async function rejectSuggestion(id) {
+    await update(ref(database, 'suggestions/' + id), { status: 'rejected' });
+}
+
+async function deleteSuggestion(id) {
+    if (!confirm('Törlöd ezt az ajánlást a listából?')) return;
+    await remove(ref(database, 'suggestions/' + id));
+}
+
+function renderSuggestionsList() {
+    const container = document.getElementById('suggestions-list');
+    const badge = document.getElementById('suggestions-count-badge');
+    const entries = Object.entries(suggestionsCache).sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
+    const pendingCount = entries.filter(([, s]) => !s.status || s.status === 'pending').length;
+
+    if (pendingCount > 0) {
+        badge.textContent = pendingCount;
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
+
+    if (entries.length === 0) {
+        container.innerHTML = '<p class="admin-empty-note">Még nem érkezett filmajánlás.</p>';
+        return;
+    }
+
+    container.innerHTML = entries.map(([id, s]) => {
+        const status = s.status || 'pending';
+        const statusLabel = status === 'accepted' ? 'Elfogadva' : status === 'rejected' ? 'Elutasítva' : 'Elbírálásra vár';
+        const date = s.createdAt ? new Date(s.createdAt).toLocaleDateString('hu-HU') : '';
+
+        return `
+            <div class="admin-item">
+                <div class="admin-item-info">
+                    <div class="admin-item-title">${s.title}</div>
+                    ${s.note ? `<p class="suggestion-note">${s.note}</p>` : ''}
+                    <div class="admin-item-meta">
+                        <span class="suggestion-status suggestion-status-${status}">${statusLabel}</span>
+                        ${date ? `<span>${date}</span>` : ''}
+                    </div>
+                </div>
+                <div class="admin-item-actions">
+                    <button data-action="accept-suggestion" data-id="${id}">Elfogadás</button>
+                    <button data-action="reject-suggestion" data-id="${id}" class="admin-delete-btn">Elutasítás</button>
+                    <button data-action="delete-suggestion" data-id="${id}" title="Törlés a listából">✕</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
 // ============ IMPORT ============
 
 async function importExistingCatalog() {
@@ -446,6 +510,9 @@ document.addEventListener('click', (e) => {
         case 'delete-season': deleteSeason(id, seasonIndex); break;
         case 'add-episode': addEpisode(id, seasonIndex); break;
         case 'delete-episode': deleteEpisode(id, seasonIndex, epIndex); break;
+        case 'accept-suggestion': acceptSuggestion(id); break;
+        case 'reject-suggestion': rejectSuggestion(id); break;
+        case 'delete-suggestion': deleteSuggestion(id); break;
     }
 });
 

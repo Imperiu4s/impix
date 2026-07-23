@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-import { getDatabase, ref, get, update, onValue } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
+import { getDatabase, ref, get, update, onValue, push } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 
 // Ez követi közvetlenül az importokat
 const firebaseConfig = {
@@ -299,6 +299,11 @@ function initApp() {
             }
             if (modal && !modal.classList.contains('hidden')) {
                 closeModal();
+                return;
+            }
+            const suggestionModal = document.getElementById('suggestion-modal');
+            if (suggestionModal && !suggestionModal.classList.contains('hidden')) {
+                closeSuggestionModal();
                 return;
             }
         }
@@ -663,6 +668,61 @@ function renderHero(item) {
     }
 }
 
+// ============ FILM AJÁNLÁS ============
+// A látogatók javaslatait a Firebase "suggestions/" ágába küldjük -- ott bírálja el
+// az admin felület (Filmajánlások fül), hogy felkerülhet-e a katalógusba.
+
+function openSuggestionModal() {
+    const suggestionModal = document.getElementById('suggestion-modal');
+    if (!suggestionModal) return;
+    suggestionModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeSuggestionModal() {
+    const suggestionModal = document.getElementById('suggestion-modal');
+    if (!suggestionModal) return;
+    suggestionModal.classList.add('hidden');
+
+    const titleInput = document.getElementById('suggestion-title-input');
+    const noteInput = document.getElementById('suggestion-note-input');
+    if (titleInput) titleInput.value = '';
+    if (noteInput) noteInput.value = '';
+
+    const loginGate = document.getElementById('login-gate');
+    if (!loginGate || loginGate.classList.contains('hidden')) {
+        document.body.style.overflow = 'auto';
+    }
+}
+
+function submitSuggestion() {
+    const titleInput = document.getElementById('suggestion-title-input');
+    const noteInput = document.getElementById('suggestion-note-input');
+    const title = titleInput.value.trim();
+
+    if (!title) {
+        titleInput.focus();
+        return;
+    }
+
+    push(ref(database, 'suggestions'), {
+        title,
+        note: noteInput.value.trim(),
+        status: 'pending',
+        createdAt: Date.now()
+    }).then(() => {
+        closeSuggestionModal();
+        showImpixAlert('Köszönjük az ajánlást! Hamarosan átnézzük, és ha felkerülhet, hamarosan itt lesz.');
+    }).catch(err => {
+        console.error('Ajánlás küldési hiba:', err);
+        showImpixAlert('Hiba történt az ajánlás elküldése közben. Próbáld újra később!');
+    });
+}
+
+window.openSuggestionModal = openSuggestionModal;
+window.closeSuggestionModal = closeSuggestionModal;
+window.submitSuggestion = submitSuggestion;
+
 function handleSearch() {
     const searchInput = document.getElementById('search-input');
     const clearBtn = document.getElementById('search-clear-btn');
@@ -739,6 +799,7 @@ function openModal(item, type, resume = null) {
     document.getElementById('modal-year').innerText = item.year;
     document.getElementById('modal-age').innerText = item.age;
     document.getElementById('modal-description').innerText = item.description;
+    document.getElementById('modal-type-label').innerText = type === 'series' ? 'Sorozat' : 'Film';
     updateModalFavButton(item.id, type);
 
     const mainContent = document.getElementById('main-content');

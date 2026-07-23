@@ -21,8 +21,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="movies.css?v=3">
-    <script type="module" src="script.js"></script>
+    <link rel="stylesheet" href="movies.css?v=4">
+    <script type="module" src="script.js?v=4"></script>
     <title>Impix | impix.hu</title>
 </head>
 
@@ -127,7 +127,9 @@
 
     <div id="modal" class="modal-overlay hidden">
         <div class="modal-window">
-            <button class="close-btn" onclick="closeModal()">✕</button>
+            <div class="modal-header">
+                <button class="close-btn" onclick="closeModal()">✕</button>
+            </div>
 
             <div class="video-container" id="video-container">
                 <iframe id="player" class="player-frame" src="" allowfullscreen></iframe>
@@ -137,6 +139,7 @@
 
             <div class="modal-body-content">
                 <div class="info-left-side">
+                    <span id="modal-type-label" class="modal-type-label"></span>
                     <div class="modal-title-row">
                         <h2 id="modal-title" class="movie-main-title"></h2>
                         <button id="modal-fav-btn" class="modal-fav-btn">♡ Kedvencekhez</button>
@@ -157,7 +160,31 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <button id="suggest-fab" class="suggest-fab" onclick="openSuggestionModal()">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18h6"></path>
+            <path d="M10 22h4"></path>
+            <path d="M12 2a7 7 0 0 0-4 12.7c.6.4 1 1.2 1 2.3v.3h6v-.3c0-1.1.4-1.9 1-2.3A7 7 0 0 0 12 2z"></path>
+        </svg>
+        <span>Filmet ajánlok</span>
+    </button>
+
+    <div id="suggestion-modal" class="modal-overlay hidden">
+        <div class="suggestion-box">
+            <button class="close-btn" onclick="closeSuggestionModal()">✕</button>
+            <h2 class="suggestion-title">Ajánlj egy filmet vagy sorozatot!</h2>
+            <p class="suggestion-subtitle">Írd meg, mit szeretnél látni az Impixen – a stáb átnézi, és ha felkerülhet, hamarosan itt lesz.</p>
+            <div class="suggestion-form">
+                <label class="suggestion-label">Cím
+                    <input type="text" id="suggestion-title-input" placeholder="Pl. Interstellar">
+                </label>
+                <label class="suggestion-label">Megjegyzés (opcionális)
+                    <textarea id="suggestion-note-input" rows="3" placeholder="Link, évad infó, vagy bármi más info..."></textarea>
+                </label>
+                <button class="login-btn" onclick="submitSuggestion()">Ajánlás elküldése</button>
+            </div>
+        </div>
+    </div>
 
     <div id="impix-alert" class="custom-alert-overlay">
         <div class="custom-alert-box">

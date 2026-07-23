@@ -336,7 +336,6 @@ body {
 	font-weight: 800;
 	margin: 0 0 18px 2px;
 	letter-spacing: 0.2px;
-	color: white;
 }
 
 
@@ -803,6 +802,34 @@ body.light-theme .card-desc {
 	transition: background-color 0.3s ease;
 }
 
+.modal-window::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 3px;
+	background: linear-gradient(90deg, var(--nf-red), transparent 70%);
+	z-index: 20;
+}
+
+.modal-header {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	padding: 14px 14px 10px;
+	background: var(--bg-modal);
+	flex-shrink: 0;
+	position: relative;
+	z-index: 15;
+}
+
+.suggestion-box .close-btn {
+	position: absolute;
+	top: 18px;
+	right: 18px;
+}
+
 @keyframes modalFadeIn {
 	from {
 		opacity: 0;
@@ -857,9 +884,6 @@ body.light-theme .video-gradient-bottom {
 }
 
 .close-btn {
-	position: absolute;
-	top: 20px;
-	right: 20px;
 	font-size: 1.3rem;
 	cursor: pointer;
 	background: rgba(15, 15, 17, 0.6);
@@ -919,6 +943,16 @@ body.light-theme .video-gradient-bottom {
 	min-width: 0;
 }
 
+.modal-type-label {
+	display: inline-block;
+	color: var(--nf-red);
+	font-weight: 800;
+	font-size: 0.78rem;
+	letter-spacing: 2px;
+	text-transform: uppercase;
+	margin-bottom: 8px;
+}
+
 .modal-title-row {
 	display: flex;
 	align-items: flex-start;
@@ -934,11 +968,11 @@ body.light-theme .video-gradient-bottom {
 }
 
 .modal-fav-btn {
-	background: var(--bg-select);
-	border: 1px solid var(--border-color);
+	background: rgba(var(--nf-red-rgb), 0.08);
+	border: 1px solid rgba(var(--nf-red-rgb), 0.3);
 	color: var(--text-main);
 	padding: 10px 18px;
-	border-radius: var(--radius-md);
+	border-radius: 30px;
 	font-family: inherit;
 	font-weight: 700;
 	font-size: 0.9rem;
@@ -953,31 +987,38 @@ body.light-theme .video-gradient-bottom {
 	background: var(--nf-red);
 	border-color: var(--nf-red);
 	color: #fff;
+	transform: scale(1.03);
 }
 
 .movie-meta-tags {
 	display: flex;
-	gap: 15px;
+	gap: 10px;
 	align-items: center;
 	font-size: 1rem;
 	font-weight: bold;
 }
 
 .meta-tag-year {
-	color: #d34646;
+	color: #ff6a5c;
+	background: rgba(var(--nf-red-rgb), 0.12);
+	padding: 3px 12px;
+	border-radius: 20px;
+	font-weight: 800;
 }
 
 .meta-tag-age {
 	border: 1px solid var(--border-color);
-	padding: 1px 8px;
-	border-radius: 3px;
+	background: var(--bg-select);
+	padding: 3px 12px;
+	border-radius: 20px;
 	font-size: 0.85rem;
 }
 
 .meta-tag-hd {
 	border: 1px solid var(--border-color);
-	padding: 1px 6px;
-	border-radius: 3px;
+	background: var(--bg-select);
+	padding: 3px 10px;
+	border-radius: 20px;
 	font-size: 0.75rem;
 	color: var(--text-dark-gray);
 }
@@ -1277,6 +1318,113 @@ body.light-theme .dropdown-menu {
 
 .custom-alert-close-btn:active {
 	transform: scale(0.98);
+}
+
+
+/* ============ FILM AJÁNLÁS ============ */
+
+.suggest-fab {
+	position: fixed;
+	bottom: 28px;
+	right: 28px;
+	z-index: 500;
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	background: var(--nf-red);
+	color: #fff;
+	border: none;
+	padding: 15px 24px;
+	border-radius: 30px;
+	font-family: inherit;
+	font-weight: 700;
+	font-size: 0.95rem;
+	cursor: pointer;
+	box-shadow: 0 10px 25px rgba(var(--nf-red-rgb), 0.4);
+	transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.suggest-fab:hover {
+	background: var(--nf-red-dark);
+	transform: translateY(-3px) scale(1.03);
+	box-shadow: 0 14px 30px rgba(var(--nf-red-rgb), 0.5);
+}
+
+.suggestion-box {
+	background: rgba(20, 20, 22, 0.95);
+	border: 1px solid var(--border-color);
+	border-top: 3px solid var(--nf-red);
+	border-radius: var(--radius-lg);
+	padding: 44px 42px;
+	width: 100%;
+	max-width: 480px;
+	box-sizing: border-box;
+	box-shadow: var(--shadow-strong);
+	position: relative;
+	animation: modalFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.suggestion-title {
+	margin: 0 0 10px;
+	font-size: 1.5rem;
+	font-weight: 800;
+	padding-right: 30px;
+}
+
+.suggestion-subtitle {
+	color: var(--text-dark-gray);
+	font-size: 0.95rem;
+	line-height: 1.5;
+	margin: 0 0 26px;
+}
+
+.suggestion-form {
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+}
+
+.suggestion-label {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	font-size: 0.85rem;
+	font-weight: 700;
+	color: var(--text-muted);
+}
+
+.suggestion-label input,
+.suggestion-label textarea {
+	background: rgba(var(--nf-red-rgb), 0.06);
+	border: 1px solid rgba(var(--nf-red-rgb), 0.3);
+	border-radius: var(--radius-md);
+	color: var(--text-main);
+	padding: 12px 16px;
+	font-size: 0.95rem;
+	font-family: inherit;
+	outline: none;
+	resize: vertical;
+	transition: all 0.25s ease;
+}
+
+.suggestion-label input:focus,
+.suggestion-label textarea:focus {
+	background: rgba(var(--nf-red-rgb), 0.12);
+	border-color: var(--nf-red);
+	box-shadow: 0 0 0 3px rgba(var(--nf-red-rgb), 0.18);
+}
+
+@media (max-width: 640px) {
+	.suggest-fab span {
+		display: none;
+	}
+
+	.suggest-fab {
+		padding: 15px;
+		border-radius: 50%;
+		bottom: 20px;
+		right: 20px;
+	}
 }
 
 

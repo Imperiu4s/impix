@@ -10,9 +10,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="movies.css?v=3">
-    <link rel="stylesheet" href="admin.css?v=3">
-    <script type="module" src="admin.js"></script>
+    <link rel="stylesheet" href="movies.css?v=4">
+    <link rel="stylesheet" href="admin.css?v=4">
+    <script type="module" src="admin.js?v=4"></script>
     <title>Impix | Admin</title>
 </head>
 
@@ -43,7 +43,7 @@
 
     <div id="admin-panel" class="hidden">
         <nav class="nav">
-            <a href="https://impix.hu" class="logo-link"><img src="assets/impixlogo2.png" class="implogo" alt="Impix logó"></a>
+            <a href="index.html" class="logo-link"><img src="assets/impixlogo2.png" class="implogo" alt="Impix logó"></a>
             <div class="admin-nav-title">Tartalomkezelő</div>
             <div class="nav-actions">
                 <a href="index.html" class="logout-btn admin-back-link">Vissza az oldalra</a>
@@ -59,6 +59,10 @@
             <div class="admin-tabs">
                 <button class="admin-tab active" id="tab-btn-movies" onclick="switchTab('movies')">Filmek</button>
                 <button class="admin-tab" id="tab-btn-series" onclick="switchTab('series')">Sorozatok</button>
+                <button class="admin-tab" id="tab-btn-suggestions" onclick="switchTab('suggestions')">
+                    Filmajánlások
+                    <span id="suggestions-count-badge" class="admin-tab-badge hidden">0</span>
+                </button>
             </div>
 
             <section id="tab-movies" class="admin-tab-panel">
@@ -144,6 +148,10 @@
                 </div>
 
                 <div id="series-list" class="admin-list"></div>
+            </section>
+
+            <section id="tab-suggestions" class="admin-tab-panel hidden">
+                <div id="suggestions-list" class="admin-list"></div>
             </section>
         </main>
     </div>
