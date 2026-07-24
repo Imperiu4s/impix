@@ -341,6 +341,8 @@ function initApp() {
     });
 
     document.addEventListener('contextmenu', e => e.preventDefault());
+    document.addEventListener('selectstart', e => e.preventDefault());
+    document.addEventListener('dragstart', e => e.preventDefault());
 
     document.addEventListener('keydown', function (e) {
         if (e.key === "Escape") {
@@ -361,36 +363,55 @@ function initApp() {
             }
         }
 
-        if (e.key === "F12" || e.keyCode === 123) {
+        const key = (e.key || '').toLowerCase();
+        const blockedCombo =
+            e.key === 'F12' ||
+            ((e.ctrlKey || e.metaKey) && e.shiftKey && ['i', 'j', 'c', 'k'].includes(key)) ||
+            ((e.ctrlKey || e.metaKey) && (e.altKey || e.shiftKey) && key === 'i') ||
+            ((e.ctrlKey || e.metaKey) && ['u', 's', 'p'].includes(key));
+
+        if (blockedCombo) {
             e.preventDefault();
-            return false;
-        }
-        if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.keyCode === 73)) {
-            e.preventDefault();
-            return false;
-        }
-        if (e.ctrlKey && e.shiftKey && (e.key === 'J' || e.keyCode === 74)) {
-            e.preventDefault();
-            return false;
-        }
-        if (e.ctrlKey && (e.key === 'u' || e.key === 'U' || e.keyCode === 85)) {
-            e.preventDefault();
+            e.stopPropagation();
             return false;
         }
     });
 
+    // A jobb klikk / DevTools tiltás csak elrettentés, nem valódi biztonsági határ --
+    // egy motivált látogató a böngésző saját menüjéből mindig meg tudja nyitni a
+    // Fejlesztői eszközöket, ezt kliensoldali JS-ből soha nem lehet 100%-ig kizárni.
+
     if (shield && player) {
+        // A shield mindig a videó előtt ül, hogy a beágyazott (más domainről jövő)
+        // lejátszó saját jobb klikkje sose legyen elérhető -- a szülő oldal ugyanis
+        // eleve nem kap semmilyen eseményt egy más eredetű iframe belsejéből.
         shield.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
         });
 
-        shield.addEventListener('click', () => {
-            shield.style.display = 'none';
-            setTimeout(() => {
-                shield.style.display = 'block';
-            }, 650);
+        let releaseTimeout = null;
+
+        const releaseShield = () => {
+            shield.style.pointerEvents = 'auto';
+            window.removeEventListener('mouseup', releaseShield);
+            clearTimeout(releaseTimeout);
+        };
+
+        // Bal klikkre (és érintésre) egy pillanatra átengedjük a kattintást a lejátszóhoz
+        // (play/szünet/hangerő stb.), jobb klikkre viszont SOSE oldjuk fel a védelmet.
+        shield.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            shield.style.pointerEvents = 'none';
+            window.addEventListener('mouseup', releaseShield, { once: true });
+            releaseTimeout = setTimeout(releaseShield, 800);
         });
+
+        shield.addEventListener('touchstart', () => {
+            shield.style.pointerEvents = 'none';
+            clearTimeout(releaseTimeout);
+            releaseTimeout = setTimeout(releaseShield, 800);
+        }, { passive: true });
     }
 
     window.addEventListener('click', function () {
