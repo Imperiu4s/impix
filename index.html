@@ -1,1046 +1,221 @@
 <!DOCTYPE html>
 <html lang="hu">
+
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SolarCenter</title>
-  <link rel="icon" href="assets/solaryn-icon.png" />
-  <link rel="stylesheet" href="style.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Impix – válogatott filmek és sorozatok, egy helyen. Az Imperiussss Community VIP streaming platformja.">
+    <meta name="theme-color" content="#0a0a0c">
+    <link rel="icon" type="image/x-icon" href="impixlogo.ico">
+    <link rel="manifest" href="manifest.json">
+
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Impix">
+    <meta property="og:title" content="Impix | impix.hu">
+    <meta property="og:description" content="Válogatott filmek és sorozatok, egy helyen. Az Imperiussss Community VIP streaming platformja.">
+    <meta property="og:image" content="https://impix.hu/assets/impixlogo2.png">
+    <meta property="og:url" content="https://impix.hu">
+    <meta name="twitter:card" content="summary_large_image">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="movies.css?v=6">
+    <script type="module" src="script.js?v=6"></script>
+    <title>Impix | impix.hu</title>
 </head>
+
 <body>
-  <!-- Hulló parázs-szemcse animáció háttere - ugyanaz, mint a SolarLauncherben. -->
-  <canvas id="particleCanvas" class="particle-canvas"></canvas>
 
-  <!-- ── BEJELENTKEZŐ / REGISZTRÁCIÓS KÉPERNYŐ ── -->
-  <section id="authScreen" class="auth-screen">
-    <div class="auth-split">
-      <div class="auth-form-side">
-        <div class="auth-brand">
-          <img class="brand-logo-img" src="assets/solaryn-icon.png" alt="Solaryn" />
-          <div class="auth-brand-name">SOLARCENTER<small>Solaryn Network</small></div>
-        </div>
+    <div id="ad-banner" class="ads ad-placement adsbygoogle" aria-hidden="true" style="position:absolute; top:-9999px; left:-9999px; width:1px; height:1px;"></div>
 
-        <div class="auth-tabs">
-          <button class="auth-tab active" data-tab="login">Bejelentkezés</button>
-          <button class="auth-tab" data-tab="register">Regisztráció</button>
-        </div>
-
-        <!-- Bejelentkezés -->
-        <div class="auth-form" id="loginForm">
-          <label>Felhasználónév</label>
-          <input id="authUser" type="text" autocomplete="off" placeholder="Játékosneved" />
-          <label>Jelszó</label>
-          <input id="authPass" type="password" autocomplete="off" placeholder="••••••••" />
-          <div id="authError" class="auth-error"></div>
-          <button id="authSubmit" class="btn-glow">Bejelentkezés</button>
-        </div>
-
-        <!-- Regisztráció -->
-        <div class="auth-form hidden" id="registerForm">
-          <label>Játékos név *</label>
-          <input id="regUser" type="text" autocomplete="off" placeholder="Játékos név" />
-
-          <div class="form-row-2">
-            <div>
-              <label>Email cím *</label>
-              <input id="regEmail" type="email" autocomplete="off" placeholder="Valós email cím" />
+    <div id="adblock-overlay" class="login-overlay hidden">
+        <div class="login-box">
+            <div class="overlay-icon">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="4.9" y1="4.9" x2="19.1" y2="19.1"></line>
+                </svg>
             </div>
-            <div>
-              <label>Email cím újra *</label>
-              <input id="regEmail2" type="email" autocomplete="off" placeholder="Valós email cím újra" />
-            </div>
-          </div>
-
-          <label>Születési dátum *</label>
-          <div class="form-row-3">
-            <select id="regYear"><option value="">- év -</option></select>
-            <select id="regMonth"><option value="">- hónap -</option></select>
-            <select id="regDay"><option value="">- nap -</option></select>
-          </div>
-
-          <div class="form-row-2">
-            <div>
-              <label>Jelszó *</label>
-              <input id="regPass" type="password" autocomplete="off" placeholder="Jelszó" />
-            </div>
-            <div>
-              <label>Jelszó újra *</label>
-              <input id="regPass2" type="password" autocomplete="off" placeholder="Jelszó újra" />
-            </div>
-          </div>
-
-          <label>Support / Creator kód</label>
-          <input id="regCreatorCode" type="text" autocomplete="off" placeholder="Nem kötelező" />
-
-          <div class="form-checks">
-            <label class="check-row">
-              <input type="checkbox" id="regTerms" />
-              <span>Elfogadom az <span class="link-inline" id="linkTerms">ÁSZF</span>-et és az Adatvédelmi nyilatkozatot.</span>
-            </label>
-            <label class="check-row">
-              <input type="checkbox" id="regMarketing" />
-              <span>Hozzájárulok a marketing célú
-                <select id="regMarketingChannel" class="inline-select">
-                  <option value="email_sms">Email és SMS</option>
-                  <option value="email">Csak Email</option>
-                  <option value="sms">Csak SMS</option>
-                </select>
-                megkeresésekhez.
-              </span>
-            </label>
-            <label class="check-row">
-              <input type="checkbox" id="regAge" />
-              <span>Megerősítem, hogy betöltöttem a 14. életévemet, vagy szülőm/törvényes képviselőm hozzájárult.</span>
-            </label>
-          </div>
-
-          <div id="registerError" class="auth-error"></div>
-          <button id="registerSubmit" class="btn-glow btn-glow-orange">Regisztráció &#8594;</button>
-          <p class="auth-switch-hint">Már van fiókod? <span class="link-inline" id="switchToLogin">Jelentkezz be!</span></p>
+            <h1 class="login-logo">IMPIX</h1>
+            <span class="overlay-pill">HIRDETÉSBLOKKOLÓ ÉSZLELVE</span>
+            <h2>Kapcsold ki a folytatáshoz</h2>
+            <p>A zökkenőmentes működéshez és lejátszáshoz kérjük, kapcsold ki a hirdetésblokkolót (AdBlock, uBlock Origin, Brave Shields stb.) ehhez az oldalhoz, majd próbáld újra.</p>
+            <button class="login-btn" onclick="recheckAdblock()">Ellenőrzés újra</button>
         </div>
-      </div>
-
-      <div class="auth-info-side">
-        <div class="auth-info-title">Minden egy helyen.</div>
-
-        <div class="auth-feature">
-          <div class="auth-feature-icon">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5z"/></svg>
-          </div>
-          <div>
-            <div class="auth-feature-title">Fiókod és a skined</div>
-            <div class="auth-feature-desc">Tölts fel egyedi skint, ami azonnal megjelenik a szerveren és a launcherben is - mindkettő ugyanazt a fiókot használja.</div>
-          </div>
-        </div>
-
-        <div class="auth-feature">
-          <div class="auth-feature-icon">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2l8 3.5v6c0 5-3.4 8.6-8 10.5-4.6-1.9-8-5.5-8-10.5v-6z"/></svg>
-          </div>
-          <div>
-            <div class="auth-feature-title">Kitiltáscsökkentés</div>
-            <div class="auth-feature-desc">Ha szankciót kaptál, itt tudod feloldani vagy csökkenteni - gyors, automatikus jóváírással.</div>
-          </div>
-        </div>
-
-        <div class="auth-feature">
-          <div class="auth-feature-icon">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 21s-6.7-4.3-9.3-8.8C.6 8.7 2 4.9 5.6 4.1c2-.5 3.9.3 5 1.9C11.7 4.4 13.6 3.6 15.6 4.1c3.6.8 5 4.6 2.9 8.1C18.7 16.7 12 21 12 21z"/></svg>
-          </div>
-          <div>
-            <div class="auth-feature-title">Támogasd a szervert</div>
-            <div class="auth-feature-desc">PrémiumPont vásárlásával közvetlenül a szerver fejlesztését és a személyzet munkáját támogatod.</div>
-          </div>
-        </div>
-      </div>
     </div>
-  </section>
 
-  <!-- ── ZÁROLT FIÓK KÉPERNYŐ (owner-i zárolás esetén, ld. app.js) ── -->
-  <section id="lockedScreen" class="auth-screen hidden">
-    <div class="auth-split locked-split">
-      <div class="auth-form-side locked-form-side">
-        <div class="auth-brand">
-          <img class="brand-logo-img" src="assets/solaryn-icon.png" alt="Solaryn" />
-          <div class="auth-brand-name">SOLARCENTER<small>Solaryn Network</small></div>
+    <div id="login-gate" class="login-overlay">
+        <div class="login-box">
+            <h1 class="login-logo">IMPIX</h1>
+            <p class="login-tagline">Válogatott filmek és sorozatok, egy helyen.</p>
+            <h2>Bejelentkezés</h2>
+            <p>Az Imperiussss Community VIP tagjainak lehetőségük lesz filmekhez/sorozatokhoz hozzáférniük. Csatlakozz te
+                is:<br>
+                <a href="https://discord.gg/nnAnbgt9sz" target="_blank" class="dclink">ᴅɪꜱᴄᴏʀᴅ: ᴅᴄ.ɪᴍᴘᴇʀɪᴜꜱ.ʜᴜ</a><br>
+                <a href="https://overclockgame.hu" target="_blank" class="dclink">ᴘᴀʀᴛɴᴇʀ: ᴏᴠᴇʀᴄʟᴏᴄᴋɢᴀᴍᴇ.ʜᴜ</a></p>
+            <p class="login-error hidden" id="login-error-msg">Helytelen jelszó! Próbáld újra.</p>
+            <div class="input-group">
+                <svg class="input-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <input type="password" id="password-input" placeholder="Jelszó">
+            </div>
+            <button class="login-btn" onclick="checkPassword()">Belépés</button>
         </div>
-        <div class="ban-modal-icon">
-          <svg viewBox="0 0 24 24" width="40" height="40"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.2"/><line x1="6" y1="18" x2="18" y2="6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-        </div>
-        <h1 class="ban-modal-title">A karaktered zárolás alá került</h1>
-        <p class="ban-modal-desc">Ameddig a zárolás fennáll, nem tudod használni a SolarCentert és a SolarLaunchert sem.</p>
-        <div class="ban-modal-details">
-          <div class="ban-modal-row"><span>Indok</span><b id="lockedReasonText">-</b></div>
-        </div>
-        <button type="button" class="btn-glow btn-glow-orange" id="btnLogoutLocked">Kijelentkezés</button>
-      </div>
     </div>
-  </section>
 
-  <!-- ── APP HÉJ (bejelentkezés után) ── -->
-  <main id="appScreen" class="app-shell hidden">
-    <nav class="app-sidebar">
-      <div class="app-brand">
-        <img class="brand-logo-img" src="assets/solaryn-icon.png" alt="Solaryn" />
-        <div class="auth-brand-name">SOLARCENTER<small>Solaryn Network</small></div>
-      </div>
-
-      <div class="app-nav">
-        <button class="app-nav-item active" data-view="home">
-          <svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
-          <span>Főoldal</span>
-        </button>
-        <button class="app-nav-item" data-view="coin">
-          <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15.9v1.1h-2v-1.1a3.6 3.6 0 0 1-2.8-2.4l1.8-.7a1.8 1.8 0 0 0 1.8 1.3c.8 0 1.4-.4 1.4-1s-.5-.9-1.7-1.2c-1.8-.5-3-1.2-3-2.9a2.8 2.8 0 0 1 2.5-2.6V7.3h2v1.1a3.2 3.2 0 0 1 2.3 2l-1.8.7a1.5 1.5 0 0 0-1.5-1.1c-.7 0-1.2.3-1.2.9s.6.8 1.8 1.2c1.9.5 2.9 1.3 2.9 2.9a2.9 2.9 0 0 1-2.5 2.9z"/></svg>
-          <span>PrémiumPont</span>
-        </button>
-        <button class="app-nav-item" data-view="ranks">
-          <svg viewBox="0 0 24 24"><path d="M3 8l4 3 5-6 5 6 4-3-2 11H5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-          <span>Rangok</span>
-        </button>
-        <button class="app-nav-item" data-view="transfer">
-          <svg viewBox="0 0 24 24"><path d="M7 8h13M17 4l3 4-3 4M17 16H4M7 12l-3 4 3 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Átutalás</span>
-        </button>
-        <button class="app-nav-item" data-view="ledger">
-          <svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12h6M9 16h6M9 8h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          <span>Napló</span>
-        </button>
-        <button class="app-nav-item" data-view="redeem">
-          <svg viewBox="0 0 24 24"><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6m9-9v9m0-9L8 7m4-4l4 4M4 12h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Kódbeváltás</span>
-        </button>
-        <button class="app-nav-item" data-view="skin">
-          <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5z"/></svg>
-          <span>Skin</span>
-        </button>
-        <button class="app-nav-item" data-view="sanction">
-          <svg viewBox="0 0 24 24"><path d="M12 2l8 3.5v6c0 5-3.4 8.6-8 10.5-4.6-1.9-8-5.5-8-10.5v-6z"/></svg>
-          <span>Kitiltáscsökkentés</span>
-        </button>
-        <button class="app-nav-item" data-view="casino">
-          <svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="13.5" r="1.4"/><circle cx="12" cy="13.5" r="1.4"/><circle cx="16" cy="13.5" r="1.4"/></svg>
-          <span>Casino</span>
-        </button>
-        <button class="app-nav-item" data-view="players">
-          <svg viewBox="0 0 24 24"><path d="M11 2a5 5 0 1 0 5 5 5 5 0 0 0-5-5zm-8.5 20a8.5 8.5 0 0 1 17 0zM19 8a3.5 3.5 0 1 0 0 7 .5.5 0 0 0 0-1 2.5 2.5 0 1 1 0-5 .5.5 0 0 0 0-1z"/></svg>
-          <span>Játékosok</span>
-        </button>
-        <!-- Csak "tulajdonos" rangú felhasználóknak jelenik meg, ld. app.js isOwner -->
-        <div class="app-nav-divider admin-nav-item hidden">Admin</div>
-        <button class="app-nav-item admin-nav-item hidden" data-view="adminLogs">
-          <svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12h6M9 16h6M9 8h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="18" cy="18" r="4.2" fill="var(--bg,#0d0d12)" stroke="currentColor" stroke-width="1.6"/><path d="M18 16.3v1.9l1.3 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Napló (admin)</span>
-        </button>
-        <button class="app-nav-item admin-nav-item hidden" data-view="staffStats">
-          <svg viewBox="0 0 24 24"><path d="M11 2a5 5 0 1 0 5 5 5 5 0 0 0-5-5zm-8.5 20a8.5 8.5 0 0 1 17 0zM19 8a3.5 3.5 0 1 0 0 7 .5.5 0 0 0 0-1 2.5 2.5 0 1 1 0-5 .5.5 0 0 0 0-1z"/></svg>
-          <span>Csapat statisztika</span>
-        </button>
-        <button class="app-nav-item admin-nav-item hidden" data-view="revenue">
-          <svg viewBox="0 0 24 24"><path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 15l4-5 3 3 5-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Havi bevétel</span>
-        </button>
-        <button class="app-nav-item admin-nav-item hidden" data-view="newsAdmin">
-          <svg viewBox="0 0 24 24"><path d="M4 5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M7 9h8M7 12h8M7 15h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M19 8l2 1.2v9.8a1 1 0 0 1-1 1h-1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Felhívások</span>
-        </button>
-      </div>
-
-      <div class="app-nav-spacer"></div>
-
-      <div class="app-nav-bottom">
-        <a class="app-nav-item" href="https://dc.solaryn.hu" target="_blank" rel="noopener">
-          <svg viewBox="0 0 24 24"><path d="M20 5.5A17 17 0 0 0 15.7 4l-.3.6a13 13 0 0 1 3.6 1.3A15 15 0 0 0 12 4a15 15 0 0 0-7 1.9A13 13 0 0 1 8.6 4.6L8.3 4A17 17 0 0 0 4 5.5C1.8 9 1.2 12.4 1.4 15.8a17 17 0 0 0 4.9 2.4l.8-1.3a10 10 0 0 1-1.6-.7l.4-.3a12 12 0 0 0 10.2 0l.4.3a10 10 0 0 1-1.6.7l.8 1.3a17 17 0 0 0 4.9-2.4c.3-4.2-.6-7.6-2.6-10.3zM8.9 14.3c-.8 0-1.5-.8-1.5-1.7s.6-1.7 1.5-1.7 1.5.8 1.5 1.7-.6 1.7-1.5 1.7zm6.2 0c-.8 0-1.5-.8-1.5-1.7s.6-1.7 1.5-1.7 1.5.8 1.5 1.7-.7 1.7-1.5 1.7z"/></svg>
-          <span>Discord</span>
-        </a>
-      </div>
+    <nav class="nav" id="main-nav">
+        <a href="https://impix.hu" class="logo-link"><img src="assets/impixlogo2.png" class="implogo" alt="Impix logó"></a>
+        <div class="search-container">
+            <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="search-input" placeholder="Keresés cím alapján..." oninput="handleSearch()">
+            <button id="search-clear-btn" class="search-clear-btn hidden" onclick="clearSearch()">&times;</button>
+        </div>
+        <div class="nav-actions">
+            <button class="theme-toggle-btn" onclick="toggleTheme()" id="theme-btn">Világos mód</button>
+            <button class="logout-btn" onclick="handleLogout()">Kijelentkezés</button>
+        </div>
     </nav>
 
-    <div class="app-main">
-      <div class="app-topbar">
-        <div class="topbar-user" id="topbarUserBtn">
-          <canvas class="topbar-avatar" id="topbarAvatar" width="32" height="32"></canvas>
-          <div class="topbar-user-text">
-            <span id="topbarUsername"></span>
-            <span class="topbar-pp-badge">
-              <img src="assets/pp-coin.png" alt="PP" />
-              <span id="topbarPpValue">0 PP</span>
-            </span>
-          </div>
-          <svg class="topbar-caret" viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M7 10l5 5 5-5z"/></svg>
-
-          <div class="topbar-dropdown hidden" id="topbarDropdown">
-            <button id="btnLogout">
-              <svg viewBox="0 0 24 24" width="15" height="15"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M16 17l5-5-5-5M21 12H9m3 9H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/></svg>
-              <span>Kijelentkezés</span>
-            </button>
-          </div>
+    <section id="hero-section" class="hero">
+        <div class="hero-overlay"></div>
+        <div class="hero-content">
+            <div class="hero-meta">
+                <span id="hero-year" class="meta-tag-year"></span>
+                <span id="hero-age" class="meta-tag-age"></span>
+                <span class="meta-tag-hd">HD</span>
+            </div>
+            <h1 id="hero-title" class="hero-title"></h1>
+            <p id="hero-desc" class="hero-desc"></p>
+            <div class="hero-buttons">
+                <button id="hero-play-btn" class="hero-btn hero-btn-play">▶ Lejátszás</button>
+            </div>
         </div>
-      </div>
+    </section>
 
-      <div class="app-content">
-
-        <!-- FŐOLDAL -->
-        <section class="view active" data-view="home">
-          <h1 class="page-title">Üdvözlünk, <span id="homeUsername"></span>!</h1>
-          <p class="page-note">Innen érheted el a fiókodhoz kapcsolódó összes SolarynNetwork-szolgáltatást.</p>
-
-          <div id="statBadgeGrid" class="stat-badge-grid"></div>
-
-          <div class="content-grid">
-            <div>
-              <div class="card">
-                <div class="card-title">Profilod</div>
-                <div class="profile-card">
-                  <div class="profile-skin-col">
-                    <canvas id="homeSkinCanvas" width="170" height="220"></canvas>
-                  </div>
-                  <div class="profile-info">
-                    <div class="profile-name" id="profileName"></div>
-                    <p class="profile-empty-skin" id="profileSkinNote"></p>
-                    <div id="profileDiscordLink"></div>
-                    <div id="profileSanctionStatus" class="profile-sanction-status"></div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- ÚJ: legfrissebb hír/felhívás (ld. src/news.js GET /api/news/latest) -
-                   csak akkor jelenik meg, ha már mentettek legalább egy hírt. -->
-              <div class="card news-card hidden" id="homeNewsCard">
-                <div class="card-title">📰 Legfrissebb hír</div>
-                <img class="news-card-image hidden" id="homeNewsImage" alt="" />
-                <div class="news-card-title" id="homeNewsTitle"></div>
-                <div class="news-card-meta" id="homeNewsMeta"></div>
-                <p class="news-card-content" id="homeNewsContent"></p>
-              </div>
-            </div>
-
-            <div class="card discord-card">
-              <div class="discord-card-header">
-                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M20 5.5A17 17 0 0 0 15.7 4l-.3.6a13 13 0 0 1 3.6 1.3A15 15 0 0 0 12 4a15 15 0 0 0-7 1.9A13 13 0 0 1 8.6 4.6L8.3 4A17 17 0 0 0 4 5.5C1.8 9 1.2 12.4 1.4 15.8a17 17 0 0 0 4.9 2.4l.8-1.3a10 10 0 0 1-1.6-.7l.4-.3a12 12 0 0 0 10.2 0l.4.3a10 10 0 0 1-1.6.7l.8 1.3a17 17 0 0 0 4.9-2.4c.3-4.2-.6-7.6-2.6-10.3zM8.9 14.3c-.8 0-1.5-.8-1.5-1.7s.6-1.7 1.5-1.7 1.5.8 1.5 1.7-.6 1.7-1.5 1.7zm6.2 0c-.8 0-1.5-.8-1.5-1.7s.6-1.7 1.5-1.7 1.5.8 1.5 1.7-.7 1.7-1.5 1.7z"/></svg>
-                <span>Discord közösség</span>
-              </div>
-              <div class="discord-card-body">
-                <iframe class="discord-widget-frame" src="https://discord.com/widget?id=1458836378493391046&theme=dark" width="100%" height="420" allowtransparency="true" frameborder="0" sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"></iframe>
-                <a href="https://dc.solaryn.hu" target="_blank" rel="noopener" class="btn-discord">Csatlakozás</a>
-              </div>
-            </div>
-          </div>
+    <main class="container" id="main-content">
+        <section class="section-group hidden" id="continue-section">
+            <h2 class="category-title">Folytasd, ahol abbahagytad</h2>
+            <div id="continue-grid" class="grid"></div>
         </section>
 
-        <!-- PRÉMIUMPONT -->
-        <section class="view" data-view="coin">
-          <h1 class="page-title">PrémiumPont</h1>
-          <p class="page-note">Vásárolj PrémiumPont (PP) csomagokat, hogy hozzáférj a szerver exkluzív tartalmaihoz - a vásárlás után a PP automatikusan, jellemzően 1 percen belül jóváíródik a játékban.</p>
-
-          <div class="content-grid">
-            <div>
-              <div class="pkg-grid" id="coinPkgGrid"></div>
-
-              <div class="info-box">
-                <div class="info-box-title">
-                  <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-6h2zm0-8h-2V7h2z"/></svg>
-                  Hogyan működik?
-                </div>
-                <ul class="info-list">
-                  <li>A vásárlás a bejelentkezett fiókodhoz kerül jóváírásra - nem kell külön beírnod a neved.</li>
-                  <li>A jóváírás automatikus, jellemzően <b>1 percen belül</b> megtörténik.</li>
-                  <li>Nem kell elérhetőnek lenned a szerveren sem a vásárláskor, sem a jóváíráskor.</li>
-                </ul>
-              </div>
-
-              <div class="info-box">
-                <div class="info-box-title">
-                  <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4l-8 5-8-5V6l8 5 8-5z"/></svg>
-                  Fizetési módok
-                </div>
-                <ul class="info-list">
-                  <li>Bankkártyás fizetés (Stripe) áll rendelkezésre.</li>
-                  <li>Minden fizetési adat titkosítva és védve van - bankkártyaadatot mi nem tárolunk.</li>
-                </ul>
-              </div>
-
-              <div class="info-box">
-                <div class="info-box-title">
-                  <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-6h2zm0-8h-2V7h2z"/></svg>
-                  Nem kaptam meg amit vásároltam
-                </div>
-                <p class="info-text">A jóváírás rendszerint 1 percen belül automatikusan megtörténik. Ha ennél tovább tart, keresd a csapatot a Discordon.</p>
-              </div>
-            </div>
-
-            <div class="side-rail" data-side-rail="coin"></div>
-          </div>
+        <section class="section-group hidden" id="favorites-section">
+            <h2 class="category-title">Kedvenceim</h2>
+            <div id="favorites-grid" class="grid"></div>
         </section>
 
-        <!-- RANGOK -->
-        <section class="view" data-view="ranks">
-          <h1 class="page-title">Rangok</h1>
-          <p class="page-note">Vásárolj rangot a felgyűjtött PrémiumPontodból - a rangot a plugin automatikusan beállítja, amint levonásra kerül a PP.</p>
-
-          <div class="content-grid">
-            <div>
-              <div class="rank-grid" id="rankGrid"></div>
-
-              <div class="info-box">
-                <div class="info-box-title">
-                  <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-6h2zm0-8h-2V7h2z"/></svg>
-                  Hogyan működik?
-                </div>
-                <ul class="info-list">
-                  <li>A rangokat kizárólag a <b>PrémiumPont</b>-egyenlegedből tudod megvásárolni, nem bankkártyával.</li>
-                  <li>Ha nincs elég PP-d, a vásárlás nem történik meg, és a PP-d sem vonódik le.</li>
-                  <li>A jóváírás automatikus, jellemzően 1 percen belül megtörténik.</li>
-                </ul>
-              </div>
-            </div>
-
-            <div class="side-rail" data-side-rail="ranks"></div>
-          </div>
+        <section class="section-group hidden" id="most-viewed-section">
+            <h2 class="category-title">Legnézettebbek</h2>
+            <div id="most-viewed-grid" class="grid"></div>
         </section>
 
-        <!-- ÁTUTALÁS -->
-        <section class="view" data-view="transfer">
-          <h1 class="page-title">Átutalás</h1>
-          <p class="page-note">Küldj PrémiumPontot más játékosoknak - minden átutalásra 10% díj kerül felszámításra.</p>
-
-          <div class="content-grid">
-            <div>
-              <div class="card transfer-card">
-                <div class="redeem-icon">
-                  <svg viewBox="0 0 24 24" width="24" height="24"><path d="M7 8h13M17 4l3 4-3 4M17 16H4M7 12l-3 4 3 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </div>
-                <label>Címzett felhasználóneve</label>
-                <input type="text" id="transferRecipientInput" placeholder="Játékosnév" />
-                <label>Mennyiség (PP)</label>
-                <input type="number" id="transferAmountInput" placeholder="0" min="1" step="1" />
-                <div class="transfer-fee-note" id="transferFeeNote">Add meg az összeget a díj kiszámításához.</div>
-                <button type="button" class="btn-glow btn-glow-orange" id="transferSubmitBtn">Átutalás</button>
-                <p class="redeem-result" id="transferResult"></p>
-              </div>
-            </div>
-
-            <div class="side-rail" data-side-rail="transfer"></div>
-          </div>
+        <section class="section-group">
+            <h2 class="category-title">Újdonságok az Impixen</h2>
+            <div id="new-releases-grid" class="grid"></div>
         </section>
 
-        <!-- NAPLÓ -->
-        <section class="view" data-view="ledger">
-          <h1 class="page-title">Napló</h1>
-          <p class="page-note">Minden esemény, ami a PrémiumPont-egyenlegedet érinti: átutalások, vásárlások és játékbeli vásárlások.</p>
-
-          <div class="card ledger-filters">
-            <div class="ledger-filter-row">
-              <div class="ledger-filter-field">
-                <label>Keresés</label>
-                <input type="text" id="ledgerSearchInput" placeholder="Érintett vagy művelet..." />
-              </div>
-              <div class="ledger-filter-field">
-                <label>Dátumtól</label>
-                <input type="date" id="ledgerFromInput" />
-              </div>
-              <div class="ledger-filter-field">
-                <label>Dátumig</label>
-                <input type="date" id="ledgerToInput" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ledger-table-wrap">
-            <table class="ledger-table">
-              <thead>
-                <tr>
-                  <th>Dátum</th>
-                  <th>Érintett</th>
-                  <th>Művelet</th>
-                  <th>Részletek</th>
-                  <th>Összeg</th>
-                  <th>Neked maradt</th>
-                </tr>
-              </thead>
-              <tbody id="ledgerTableBody"></tbody>
-            </table>
-            <p class="ledger-empty hidden" id="ledgerEmptyNote">Nincs egyetlen bejegyzés sem.</p>
-          </div>
+        <section class="section-group">
+            <h2 class="category-title">Filmek</h2>
+            <div id="movie-grid" class="grid"></div>
         </section>
 
-        <!-- KÓDBEVÁLTÁS -->
-        <section class="view" data-view="redeem">
-          <h1 class="page-title">Kódbeváltás</h1>
-          <p class="page-note">Írd be a hívásban vagy ajándékba kapott kódodat az alábbi mezőbe.</p>
-
-          <div class="content-grid">
-            <div>
-              <div class="card redeem-card">
-                <div class="redeem-icon">
-                  <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M20 12v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7m16-4H4a1 1 0 0 0-1 1v3h18v-3a1 1 0 0 0-1-1zm-9 0V6a2 2 0 1 0-2 2m4-2v2m0-2a2 2 0 1 1 2 2"/></svg>
-                </div>
-                <div class="card-title" style="justify-content:center;">Ajándékkód</div>
-                <input type="text" id="redeemInput" class="redeem-input" placeholder="XXXX-XXXX-XXXX" />
-                <button class="btn-glow" id="redeemSubmit">Beváltás</button>
-                <p class="redeem-result" id="redeemResult"></p>
-              </div>
-
-              <div class="how-it-works">
-                <div class="how-step">
-                  <div class="how-step-num">1</div>
-                  <div class="how-step-title">Szerezd meg a kódot</div>
-                  <div class="how-step-desc">Discord eseményből, hívásból, vagy ajándékba kaptad valakitől.</div>
-                </div>
-                <div class="how-step">
-                  <div class="how-step-num">2</div>
-                  <div class="how-step-title">Add meg itt</div>
-                  <div class="how-step-desc">Írd be pontosan, ahogy kaptad, majd kattints a Beváltásra.</div>
-                </div>
-                <div class="how-step">
-                  <div class="how-step-num">3</div>
-                  <div class="how-step-title">Vedd át a szerveren</div>
-                  <div class="how-step-desc">A jutalom automatikusan jóváíródik a fiókodon, amint csatlakozol.</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="side-rail" data-side-rail="redeem"></div>
-          </div>
+        <section class="section-group">
+            <h2 class="category-title">Sorozatok</h2>
+            <div id="series-grid" class="grid"></div>
         </section>
+    </main>
 
-        <!-- SKIN -->
-        <section class="view" data-view="skin">
-          <h1 class="page-title">Skin</h1>
-          <p class="page-note">Egyedi skin feltöltés (.png, 64x64/64x32 vagy ennek HD többszöröse - pl. 128x128, 256x256, egészen 1024x1024-ig -, klasszikus vagy slim modell) - ugyanaz a skin jelenik meg a szerveren és a SolarLauncherben is. HD skin feltöltésekor az lesz a skined (nem lehet egyszerre sima ÉS HD skined is).</p>
+    <footer class="site-footer">
+        <div class="footer-content">
+            <div class="footer-brand">IMPIX</div>
+            <p class="footer-text">Az Imperiussss Community VIP tagjainak streaming platformja.</p>
+            <div class="footer-links">
+                <a href="https://discord.gg/nnAnbgt9sz" target="_blank">Discord</a>
+                <a href="https://overclockgame.hu" target="_blank">OverclockGame</a>
+            </div>
+            <p class="footer-copy">© 2026 Impix. Minden jog fenntartva.</p>
+        </div>
+    </footer>
 
-          <div class="content-grid">
-            <div class="card">
-              <div class="skin-layout">
-                <div class="skin-upload-col">
-                  <input type="file" id="skinFileInput" accept=".png,image/png" hidden />
-                  <div class="skin-drop" id="skinDrop">Húzd ide a .png skinedet, vagy kattints a tallózáshoz</div>
-                  <div class="skin-model-toggle">
-                    <button class="pill active" data-model="classic">Klasszikus</button>
-                    <button class="pill" data-model="slim">Vékony (slim)</button>
-                  </div>
-                  <button type="button" class="btn-outline" id="skinResetBtn">Alapértelmezett skin visszaállítása</button>
-                  <p class="skin-status" id="skinStatus"></p>
+    <div id="modal" class="modal-overlay hidden">
+        <div class="modal-window">
+            <div class="modal-header">
+                <button class="close-btn" onclick="closeModal()">✕</button>
+            </div>
+
+            <div class="video-container" id="video-container">
+                <iframe id="player" class="player-frame" src="" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+                <div id="video-shield" class="player-protected-overlay"></div>
+                <div class="video-gradient-bottom"></div>
+            </div>
+
+            <div class="modal-body-content">
+                <div class="info-left-side">
+                    <span id="modal-type-label" class="modal-type-label"></span>
+                    <div class="modal-title-row">
+                        <h2 id="modal-title" class="movie-main-title"></h2>
+                        <button id="modal-fav-btn" class="modal-fav-btn">♡ Kedvencekhez</button>
+                    </div>
+                    <div class="movie-meta-tags">
+                        <span id="modal-year" class="meta-tag-year">2024</span>
+                        <span id="modal-age" class="meta-tag-age">16+</span>
+                        <span class="meta-tag-hd">HD</span>
+                    </div>
+                    <p id="modal-description" class="movie-synopsis"></p>
                 </div>
-                <div class="skin-preview-col">
-                  <canvas id="skinPreview3d" width="220" height="280"></canvas>
-                  <p class="skin-preview-hint">Húzással forgatható</p>
+
+                <div class="info-right-side">
+                    <div id="selector-box" class="custom-select-wrapper"></div>
+                    <div id="ep-list" class="episode-vertical-list"></div>
                 </div>
-              </div>
             </div>
+        </div>
+    </div>
 
-            <div class="side-rail" data-side-rail="skin"></div>
-          </div>
-        </section>
+    <button id="suggest-fab" class="suggest-fab" onclick="openSuggestionModal()">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18h6"></path>
+            <path d="M10 22h4"></path>
+            <path d="M12 2a7 7 0 0 0-4 12.7c.6.4 1 1.2 1 2.3v.3h6v-.3c0-1.1.4-1.9 1-2.3A7 7 0 0 0 12 2z"></path>
+        </svg>
+        <span>Filmet ajánlok</span>
+    </button>
 
-        <!-- KITILTÁSCSÖKKENTÉS -->
-        <section class="view" data-view="sanction">
-          <h1 class="page-title">Kitiltáscsökkentés</h1>
-          <p class="page-note">Vásárolj szankció feloldást, hogy eltöröld a szerverről a rád kiszabott némítást vagy kitiltást - a vásárlás után automatikusan jóváíródik a feloldás a játékban.</p>
-
-          <div class="content-grid">
-            <div id="sanctionPkgWrap"></div>
-            <div class="side-rail" data-side-rail="sanction"></div>
-          </div>
-        </section>
-
-        <!-- CASINO -->
-        <section class="view" data-view="casino">
-          <h1 class="page-title">Casino</h1>
-          <p class="page-note">Minden 7. egymást követő napi belépésedért +1 ingyenes pörgetést kapsz. Az ingyenes pörgetésed elhasználása után még 2 próbálkozást vásárolhatsz 200 PrémiumPontért - a nyereményt a rendszer automatikusan jóváírja a fiókodhoz.</p>
-
-          <div class="content-grid">
-            <div>
-              <div class="card casino-machine-card">
-                <div class="slot-machine">
-                  <div class="slot-machine-top">
-                    <span class="slot-machine-star">★</span>
-                    <span class="slot-machine-jackpot">JACKPOT</span>
-                    <span class="slot-machine-star">★</span>
-                  </div>
-                  <div class="slot-machine-reels">
-                    <div class="slot-reel" id="casinoReel0"></div>
-                    <div class="slot-reel" id="casinoReel1"></div>
-                    <div class="slot-reel" id="casinoReel2"></div>
-                  </div>
-                  <div class="slot-machine-lever-col">
-                    <div class="slot-machine-lever-track"><div class="slot-machine-lever-knob"></div></div>
-                  </div>
-                </div>
-                <p class="redeem-result" id="casinoSpinResult"></p>
-                <div class="casino-actions">
-                  <button type="button" class="btn-glow" id="casinoSpinBtn" disabled>Pörgetés</button>
-                  <button type="button" class="btn-outline" id="casinoBuySpinBtn" hidden>Próbálkozás vásárlása (200 PP)</button>
-                </div>
-              </div>
-
-              <div class="card">
-                <div class="card-title">Nyeremények</div>
-                <p class="page-note">Ha mind a 3 tekercs ugyanazt mutatja, egyet nyersz az alábbiak közül - véletlenszerűen, viszonylag alacsony eséllyel pörgetésenként.</p>
-                <div class="casino-prize-grid" id="casinoPrizeGrid"></div>
-              </div>
-            </div>
-
-            <div class="side-rail-col">
-              <div class="card">
-                <div class="card-title">Állapotod</div>
-                <div class="stat-badge-grid casino-stat-grid" id="casinoStatGrid"></div>
-              </div>
-              <div class="side-rail" data-side-rail="casino"></div>
-            </div>
-          </div>
-        </section>
-
-        <!-- JÁTÉKOSOK -->
-        <section class="view" data-view="players">
-          <div class="card player-search-panel">
-            <h1 class="player-search-title">Játékosok <span class="text-accent">keresése</span></h1>
-            <label class="player-search-label">Játékosnév</label>
-            <div class="player-search-row">
-              <div class="player-search-field">
-                <input type="text" id="playerSearchInput" placeholder="Játékosnév" />
-                <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 21l-4.3-4.3M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
-              </div>
-              <button class="btn-search" id="playerSearchBtn">
-                <svg viewBox="0 0 24 24" width="15" height="15"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M21 21l-4.3-4.3M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
-                Keresés
-              </button>
-            </div>
-          </div>
-
-          <h2 id="playerResultHeading" class="player-result-heading hidden">Talált <span class="text-accent">játékosok</span></h2>
-          <div id="playerResult" class="player-result-grid"></div>
-        </section>
-
-        <!-- NAPLÓ (ADMIN) - csak "tulajdonos" rangnak, ld. app.js isOwner -->
-        <section class="view" data-view="adminLogs">
-          <h1 class="page-title">Napló (admin)</h1>
-          <p class="page-note" id="adminLogsScopeNote">Legutóbbi 100 bejegyzés (globális, minden játékos).</p>
-
-          <div class="card player-search-panel">
-            <label class="player-search-label">Játékosnév szerinti szűrés</label>
-            <div class="player-search-row">
-              <div class="player-search-field">
-                <input type="text" id="adminLogsUserSearchInput" placeholder="Játékosnév" />
-                <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 21l-4.3-4.3M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
-              </div>
-              <button class="btn-search" id="adminLogsUserSearchBtn">
-                <svg viewBox="0 0 24 24" width="15" height="15"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M21 21l-4.3-4.3M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
-                Keresés
-              </button>
-              <button class="btn-search" id="adminLogsClearBtn" type="button">Globális nézet</button>
-            </div>
-          </div>
-
-          <div class="ledger-table-wrap">
-            <table class="ledger-table">
-              <thead>
-                <tr>
-                  <th>Dátum</th>
-                  <th>Játékos</th>
-                  <th>Érintett</th>
-                  <th>Művelet</th>
-                  <th>Részletek</th>
-                  <th>Összeg</th>
-                  <th>Egyenleg utána</th>
-                </tr>
-              </thead>
-              <tbody id="adminLogsTableBody"></tbody>
-            </table>
-            <p class="ledger-empty hidden" id="adminLogsEmptyNote">Nincs egyetlen bejegyzés sem.</p>
-          </div>
-        </section>
-
-        <!-- CSAPAT STATISZTIKA (admin) -->
-        <section class="view" data-view="staffStats">
-          <h1 class="page-title">Csapat statisztika</h1>
-          <p class="page-note">A jelen naptári hónap adatai (Jr. Moderátortól Admin+-ig) - minden hónap 1-jén automatikusan újraindul.</p>
-
-          <div class="staff-stats-summary" id="staffStatsSummary"></div>
-
-          <div class="staff-stats-grid" id="staffStatsGrid"></div>
-          <p class="ledger-empty hidden" id="staffStatsEmptyNote">Nincs jelenleg staff-rangú felhasználó.</p>
-        </section>
-
-        <!-- HAVI BEVÉTEL (admin) - naptár nézet, ld. app.js loadRevenue() -->
-        <section class="view" data-view="revenue">
-          <h1 class="page-title">Havi bevétel</h1>
-          <p class="page-note">Kattints egy hónapra a részletekért - minden sikeres (pénzes) vásárlást számol, visszamenőleg is.</p>
-
-          <div id="revenueCalendar"></div>
-        </section>
-
-        <!-- HAVI BEVÉTEL RÉSZLETEI (egy hónapra kattintva) -->
-        <section class="view" data-view="revenueDetail">
-          <button class="btn-back" id="btnBackToRevenue">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></svg>
-            Vissza a naptárhoz
-          </button>
-          <h1 class="page-title" id="revenueDetailTitle"></h1>
-
-          <div class="card revenue-summary-card">
-            <div class="revenue-summary-label">Összes bevétel</div>
-            <div class="revenue-summary-amount" id="revenueDetailTotal">0 Ft</div>
-            <div class="revenue-summary-count" id="revenueDetailCount"></div>
-          </div>
-
-          <div class="revenue-detail-divider"></div>
-
-          <div class="ledger-table-wrap">
-            <table class="ledger-table">
-              <thead>
-                <tr>
-                  <th>Dátum</th>
-                  <th>Játékos</th>
-                  <th>Termék</th>
-                  <th>Összeg</th>
-                </tr>
-              </thead>
-              <tbody id="revenueDetailTableBody"></tbody>
-            </table>
-            <p class="ledger-empty hidden" id="revenueDetailEmptyNote">Ebben a hónapban nem történt vásárlás.</p>
-          </div>
-        </section>
-
-        <!-- FELHÍVÁSOK / HÍREK (admin) -->
-        <section class="view" data-view="newsAdmin">
-          <h1 class="page-title">Felhívások</h1>
-          <p class="page-note">A mentett felhívás a legfrissebbként jelenik meg mindenki főoldalán, a "Profilod" szekció alatt.</p>
-
-          <div class="card">
-            <div class="card-title" id="newsFormTitle">Új felhívás</div>
-            <label class="gift-modal-label" style="margin-top:0;">Cím</label>
-            <input type="text" id="newsTitleInput" class="gift-modal-input" placeholder="Pl. Karbantartás értesítő" maxlength="120" />
-            <label class="gift-modal-label">Tartalom</label>
-            <textarea id="newsContentInput" class="gift-modal-input" placeholder="A felhívás szövege..." rows="6" maxlength="4000"></textarea>
-            <label class="gift-modal-label">Kép (nem kötelező, PNG vagy JPEG)</label>
-            <input type="file" id="newsImageInput" accept="image/png,image/jpeg" />
-            <div class="news-image-preview-wrap" id="newsImagePreviewWrap" hidden>
-              <img id="newsImagePreview" class="news-image-preview" alt="" />
-              <button type="button" class="link-btn" id="newsImageRemoveBtn">Kép eltávolítása</button>
-            </div>
-            <p class="redeem-result" id="newsFormResult"></p>
-            <div class="modal-actions" style="margin-top:14px;">
-              <button type="button" class="btn-outline" id="newsDiscardBtn">Elvetés</button>
-              <button type="button" class="btn-glow" id="newsSaveBtn" style="margin-top:0;">Mentés</button>
-            </div>
-          </div>
-
-          <div class="admin-subsection-title">Korábbi felhívások</div>
-          <div id="newsAdminList"></div>
-        </section>
-
-        <!-- JÁTÉKOS PROFIL (egy találatra kattintva) -->
-        <section class="view" data-view="playerProfile">
-          <button class="btn-back" id="btnBackToPlayers">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></svg>
-            Vissza a kereséshez
-          </button>
-          <h1 class="page-title" id="playerProfileTitle"></h1>
-
-          <div id="playerProfileStats" class="stat-badge-grid"></div>
-
-          <div class="card">
-            <div class="card-title">Profilja</div>
-            <div class="profile-card">
-              <div class="profile-skin-col">
-                <canvas id="playerProfileSkinCanvas" width="170" height="220"></canvas>
-              </div>
-              <div class="profile-info">
-                <div class="profile-name" id="playerProfileName"></div>
-                <p class="profile-empty-skin" id="playerProfileSkinNote"></p>
-                <div id="playerProfileSanctionStatus" class="profile-sanction-status"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Csak "tulajdonos" rangú felhasználóknak jelenik meg, ld. app.js isOwner -->
-          <div class="card admin-panel hidden" id="playerProfileAdminPanel">
-            <div class="card-title">Admin</div>
-            <div class="admin-info-grid">
-              <div class="admin-info-item">
-                <span class="admin-info-label">Email</span>
-                <div class="admin-email-view" id="adminEmailView">
-                  <span id="adminPlayerEmailText">-</span>
-                  <button type="button" class="link-btn" id="adminEmailChangeBtn">Változtatás</button>
-                </div>
-                <div class="admin-email-edit-row hidden" id="adminEmailEditRow">
-                  <input type="text" id="adminPlayerEmailInput" placeholder="email@pelda.hu" />
-                  <button type="button" class="device-link" id="adminPlayerEmailSave">Mentés</button>
-                  <button type="button" class="link-btn" id="adminEmailCancelBtn">Mégse</button>
-                </div>
-              </div>
-              <div class="admin-info-item">
-                <span class="admin-info-label">Regisztrált</span>
-                <span id="adminPlayerCreatedAt">-</span>
-              </div>
-              <div class="admin-info-item">
-                <span class="admin-info-label">Discord</span>
-                <div id="adminPlayerDiscordLink"></div>
-              </div>
-            </div>
-            <p class="redeem-result" id="adminEmailResult"></p>
-
-            <div class="admin-subsection-title">Fiók zárolása</div>
-            <div class="ban-panel admin-lock-panel">
-              <p class="redeem-result" id="adminLockStatus"></p>
-              <label>Indoklás</label>
-              <input type="text" id="adminLockReasonInput" placeholder="Pl. csalás, szabályszegés..." />
-              <button type="button" class="btn-glow admin-lock-btn" id="adminLockBtn">Fiók zárolása</button>
-              <button type="button" class="btn-outline" id="adminUnlockBtn">Zárolás feloldása</button>
-            </div>
-
-            <div class="admin-subsection-title">PrémiumPont módosítása</div>
-            <div class="ban-panel admin-pp-panel">
-              <p class="redeem-result" id="adminPpAdjustStatus"></p>
-              <label>Összeg (negatív = levonás)</label>
-              <input type="number" id="adminPpAdjustAmountInput" placeholder="Pl. 1000 vagy -500" step="1" />
-              <label>Indoklás (nem kötelező)</label>
-              <input type="text" id="adminPpAdjustReasonInput" placeholder="Pl. kártalanítás, esemény-nyeremény..." />
-              <button type="button" class="btn-glow admin-lock-btn" id="adminPpAdjustBtn">Módosítás végrehajtása</button>
-            </div>
-
-            <div class="admin-subsection-title">Casino pörgetések (SolarLucky)</div>
-            <div class="ban-panel admin-casino-panel">
-              <p class="redeem-result" id="adminCasinoAdjustStatus"></p>
-              <label>Pörgetés mennyisége (negatív = elvétel)</label>
-              <input type="number" id="adminCasinoAdjustAmountInput" placeholder="Pl. 1 vagy -1" step="1" />
-              <button type="button" class="btn-glow admin-lock-btn" id="adminCasinoAdjustBtn">Módosítás végrehajtása</button>
-            </div>
-
-            <div class="admin-subsection-title">Kliens</div>
-            <div class="admin-tables-grid">
-              <div>
-                <div class="admin-table-title">Belépések</div>
-                <div class="ledger-table-wrap">
-                  <table class="ledger-table">
-                    <thead><tr><th>Dátum</th><th>Gép</th></tr></thead>
-                    <tbody id="adminPlayerLoginsBody"></tbody>
-                  </table>
-                </div>
-              </div>
-              <div>
-                <div class="admin-table-title">Összes gép</div>
-                <div class="ledger-table-wrap">
-                  <table class="ledger-table">
-                    <thead><tr><th>Utoljára látva</th><th>Gép</th><th>Belépések</th></tr></thead>
-                    <tbody id="adminPlayerDevicesBody"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            <div class="admin-subsection-title admin-danger-title">Fiók végleges törlése</div>
-            <div class="ban-panel admin-delete-panel">
-              <p class="redeem-result error">Ez a művelet VÉGLEGES és VISSZAVONHATATLAN - törli a fiókot, a skint, a vásárlási előzményt és a PrémiumPont-egyenleget. Nem lehet visszaállítani.</p>
-              <label>Írd be a felhasználónevet a megerősítéshez (<span id="adminDeleteUsernameHint">-</span>)</label>
-              <input type="text" id="adminDeleteConfirmInput" placeholder="felhasználónév" autocomplete="off" />
-              <button type="button" class="btn-glow admin-delete-btn" id="adminDeleteBtn" disabled>Fiók végleges törlése</button>
-              <p class="redeem-result" id="adminDeleteResult"></p>
-            </div>
-          </div>
-        </section>
-
-        <!-- GÉP RÉSZLETEK (Admin panelen egy gépre kattintva) -->
-        <section class="view" data-view="deviceDetail">
-          <button class="btn-back" id="btnBackFromDevice">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></svg>
-            Vissza
-          </button>
-          <h1 class="page-title">Gép <span class="text-accent" id="deviceDetailId"></span></h1>
-          <p class="page-note" id="deviceDetailBanStatus"></p>
-
-          <div class="content-grid">
-            <div>
-              <div class="admin-table-title">Legutolsó belépések</div>
-              <div class="ledger-table-wrap">
-                <table class="ledger-table">
-                  <thead><tr><th>Dátum</th><th>Játékos</th></tr></thead>
-                  <tbody id="deviceLoginsBody"></tbody>
-                </table>
-              </div>
-
-              <div class="admin-table-title" style="margin-top:26px;">Összes felhasználó</div>
-              <div class="ledger-table-wrap">
-                <table class="ledger-table">
-                  <thead><tr><th>Utoljára látva</th><th>Játékos</th><th>Belépések</th></tr></thead>
-                  <tbody id="deviceUsersBody"></tbody>
-                </table>
-              </div>
-            </div>
-
-            <div>
-              <div class="card ban-panel">
-                <div class="card-title">Kliens-tiltás</div>
-                <p class="redeem-result" id="deviceBanCurrentNote"></p>
-                <label>Időtartam</label>
-                <div class="ban-duration-row">
-                  <input type="number" id="banDurationValue" min="1" value="7" />
-                  <select id="banDurationUnit">
-                    <option value="perc">perc</option>
-                    <option value="ora">óra</option>
-                    <option value="nap" selected>nap</option>
-                    <option value="het">hét</option>
-                  </select>
-                </div>
-                <label class="check-row" style="margin-top:14px;">
-                  <input type="checkbox" id="banPermanentCheck" />
-                  <span>Végleges tiltás</span>
+    <div id="suggestion-modal" class="modal-overlay hidden">
+        <div class="suggestion-box">
+            <button class="close-btn" onclick="closeSuggestionModal()">✕</button>
+            <h2 class="suggestion-title">Ajánlj egy filmet vagy sorozatot!</h2>
+            <p class="suggestion-subtitle">Írd meg, mit szeretnél látni az Impixen – a stáb átnézi, és ha felkerülhet, hamarosan itt lesz.</p>
+            <div class="suggestion-form">
+                <label class="suggestion-label">Cím
+                    <input type="text" id="suggestion-title-input" placeholder="Pl. Interstellar">
                 </label>
-                <label>Indoklás</label>
-                <input type="text" id="banReasonInput" placeholder="Pl. multi-account, csalás..." />
-                <button type="button" class="btn-glow" id="banSubmitBtn">Kliens tiltása</button>
-                <button type="button" class="btn-outline" id="unbanSubmitBtn">Tiltás feloldása</button>
-                <p class="redeem-result" id="banResult"></p>
-              </div>
+                <label class="suggestion-label">Megjegyzés (opcionális)
+                    <textarea id="suggestion-note-input" rows="3" placeholder="Link, évad infó, vagy bármi más info..."></textarea>
+                </label>
+                <button class="login-btn" onclick="submitSuggestion()">Ajánlás elküldése</button>
             </div>
-          </div>
-        </section>
-
-        <!-- JOGI DOKUMENTUMOK (lábléc linkjeiről nyílik) -->
-        <section class="view" data-view="legal">
-          <button class="btn-back" id="btnBackFromLegal">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></svg>
-            Vissza
-          </button>
-          <h1 class="page-title">Jogi <span class="text-accent">dokumentumok</span></h1>
-          <p class="page-note">Az alábbiakban találod a SolarynNetwork hivatalos dokumentumait.</p>
-
-          <div class="legal-tabs">
-            <button class="legal-tab active" data-legal="aszf">ÁSZF</button>
-            <button class="legal-tab" data-legal="adatkezeles">Adatkezelés</button>
-            <button class="legal-tab" data-legal="impresszum">Impresszum</button>
-          </div>
-
-          <div class="card legal-card">
-            <div class="legal-panel active" data-legal-panel="aszf">
-              <h3>Általános Szerződési Feltételek</h3>
-
-              <h4>1. Szolgáltató adatai</h4>
-              <p><b>Szolgáltató neve:</b> SolarynNetwork<br><b>Székhely:</b> Budapest, Magyarország<br><b>Weboldal:</b> www.solaryn.hu<br><b>Kapcsolattartó:</b> Nagy Szabolcs<br><b>Jogi státusz:</b> magánszemély által üzemeltetett online szolgáltatás</p>
-
-              <h4>2. A szolgáltatás leírása</h4>
-              <p>A SolarynNetwork egy online Minecraft játékszerver, amely a következő szolgáltatásokat nyújtja:</p>
-              <ul>
-                <li>Minecraft szerver elérés biztosítása</li>
-                <li>Játékbeli rangok, csomagok, kozmetikai elemek és digitális termékek értékesítése</li>
-                <li>Események, játékmódok és egyedi rendszerek biztosítása</li>
-                <li>Közösségi platformok működtetése (Discord, weboldal)</li>
-              </ul>
-              <p>A szolgáltatás igénybevételéhez a játékosnak Minecraft fiókkal kell rendelkeznie.</p>
-
-              <h4>3. Fizetési feltételek</h4>
-              <ul>
-                <li>A vásárlás a weboldalon keresztül történik.</li>
-                <li>Elfogadott fizetési módok: Stripe (bankkártyás fizetés), PayPal.</li>
-                <li>A megvásárolt termékek digitális terméknek minősülnek, amelyek teljesítése automatikusan történik.</li>
-                <li>A digitális termékek nem visszatéríthetők, kivéve ha a szolgáltató hibájából nem kerülnek teljesítésre.</li>
-              </ul>
-
-              <h4>4. Felhasználói fiók és szabályok</h4>
-              <ul>
-                <li>A játékos a Minecraft szerveren regisztrál fiókot.</li>
-                <li>A felhasználó felelős a fiókja biztonságáért.</li>
-                <li>Tiltott tevékenységek többek között: csalás, exploitok használata; visszaélés fizetési rendszerekkel (pl. chargeback); más játékosok zaklatása; a szerver működésének szándékos megzavarása.</li>
-                <li>Szabálysértés esetén a szolgáltató jogosult a felhasználó fiókját korlátozni vagy törölni, a játékbeli rangokat/előnyöket visszavonni, vagy a szolgáltatásból kizárni.</li>
-              </ul>
-              <p>A tiltás vagy rangvesztés nem jogosít visszatérítésre, kivéve ha a szolgáltató hibájából történt.</p>
-
-              <h4>5. Adatkezelés</h4>
-              <p>A SolarynNetwork a működéséhez szükséges minimális adatokat kezeli: Minecraft felhasználónév, IP cím (technikai és biztonsági okokból), vásárlási adatok (a fizetési szolgáltató kezeli; bankkártyaadatokat a SolarynNetwork nem tárol). Az adatkezelés céljai: a szolgáltatás technikai működtetése, csalások és visszaélések megelőzése, vásárlások teljesítése, szerverbiztonság fenntartása.</p>
-
-              <h4>6. Felelősségkorlátozás</h4>
-              <p>A szolgáltatás "jelen állapotában" érhető el, a szolgáltató nem garantál folyamatos, hibamentes működést, és nem vállal felelősséget szerverhibákból eredő adatvesztésért vagy játékbeli veszteségekért. Kártérítés kizárólag akkor jár, ha a hiba bizonyíthatóan a szolgáltató hibájából következett be, és a felhasználó igazolni tudja a veszteséget.</p>
-
-              <h4>7. Digitális termékek teljesítése</h4>
-              <p>A vásárló a fizetés után 2-5 percen belül automatikusan megkapja a digitális terméket. Ha a teljesítés technikai hiba miatt nem történik meg, a felhasználó köteles jelezni a szolgáltatónak, aki a hibát kijavítja vagy a terméket manuálisan biztosítja.</p>
-
-              <h4>8. Az ÁSZF hatálya és módosítása</h4>
-              <p>Jelen ÁSZF 2026.04.04. 18:00 időponttól érvényes. A szolgáltató jogosult az ÁSZF-et bármikor módosítani - a felhasználók a módosításokról a Discord szerveren értesülhetnek.</p>
-
-              <h4>9. Jogviták rendezése</h4>
-              <p>A szolgáltatásra a magyar jog az irányadó. Jogvita esetén a felek elsősorban békés úton próbálják rendezni a problémát, ha ez nem sikerül, a jogvita magyar bíróság előtt folytatható.</p>
-
-              <h4>10. Kapcsolat</h4>
-              <p>Bármilyen kérdés, probléma vagy hibabejelentés esetén a felhasználók a Discord szerveren vagy a weboldalon keresztül vehetik fel a kapcsolatot a szolgáltatóval.</p>
-            </div>
-
-            <div class="legal-panel" data-legal-panel="adatkezeles">
-              <h3>Adatkezelési Tájékoztató</h3>
-
-              <h4>1. Bevezetés</h4>
-              <p>Jelen Adatkezelési Tájékoztató célja, hogy a SolarynNetwork szolgáltatásait igénybe vevő felhasználókat tájékoztassa arról, milyen adatokat kezelünk, milyen célból, milyen jogalapon, mennyi ideig, és milyen jogok illetik meg a felhasználót. A SolarynNetwork a működéséhez szükséges minimális adatot kezeli.</p>
-
-              <h4>2. Adatkezelő adatai</h4>
-              <p><b>Adatkezelő neve:</b> SolarynNetwork<br><b>Székhely:</b> Budapest, Magyarország<br><b>Weboldal:</b> www.solaryn.hu<br><b>Kapcsolattartó:</b> Nagy Szabolcs</p>
-
-              <h4>3. Kezelt adatok köre</h4>
-              <p><b>Technikai adatok:</b> Minecraft felhasználónév, IP cím, szervernaplók.<br><b>Vásárlási adatok:</b> vásárlás időpontja, vásárolt termék típusa, fizetési azonosító (Stripe/PayPal által biztosított).</p>
-              <p><i>A SolarynNetwork nem tárol bankkártyaadatokat, azokat kizárólag a fizetési szolgáltatók (Stripe, PayPal) kezelik.</i></p>
-
-              <h4>4. Az adatkezelés céljai</h4>
-              <ul>
-                <li>a szolgáltatás technikai működtetése</li>
-                <li>a felhasználói fiókok azonosítása</li>
-                <li>a digitális termékek teljesítése</li>
-                <li>csalások, visszaélések és szerverbiztonsági incidensek megelőzése</li>
-                <li>hibák kivizsgálása és javítása, fizetések ellenőrzése és adminisztrációja</li>
-              </ul>
-              <p>A SolarynNetwork nem használja fel az adatokat marketing célokra, és nem adja át harmadik félnek kereskedelmi célból.</p>
-
-              <h4>5. Az adatkezelés jogalapja</h4>
-              <p><b>Szerződés teljesítése</b> (GDPR 6. cikk (1) b)): a felhasználó és a szolgáltató közötti szolgáltatás biztosítása.<br><b>Jogszerű érdek</b> (GDPR 6. cikk (1) f)): a szerver biztonságának fenntartása, visszaélések megelőzése.</p>
-
-              <h4>6. Adatmegőrzési idő</h4>
-              <p>Technikai adatok: legfeljebb 90 nap. Vásárlási adatok: legfeljebb 1 év. IP címek: legfeljebb 30 nap. Jogvita vagy visszaélés gyanúja esetén az adatok megőrzési ideje meghosszabbodhat.</p>
-
-              <h4>7. Adatok továbbítása</h4>
-              <p>Fizetési szolgáltatók (Stripe, PayPal) - kizárólag a fizetés lebonyolításához szükséges adatokat kezelik. Hatóságok - kizárólag jogszabályi kötelezettség esetén. A SolarynNetwork nem értékesít, nem ad bérbe és nem oszt meg adatot kereskedelmi célból.</p>
-
-              <h4>8. Adatbiztonság</h4>
-              <p>Szerverbiztonsági rendszerek, naplózás és visszaélésfigyelés, korlátozott hozzáférés, titkosított kommunikáció a fizetési szolgáltatókkal.</p>
-
-              <h4>9. Felhasználói jogok</h4>
-              <p>Hozzáférés, helyesbítés, törlés, korlátozás és tiltakozás joga - a kérelmeket a Discord szerveren vagy a weboldalon keresztül jelezheted.</p>
-
-              <h4>10. Panasz benyújtása</h4>
-              <p>Ha úgy érzed, hogy az adatkezelés nem felel meg a jogszabályoknak, panaszt tehetsz a Nemzeti Adatvédelmi és Információszabadság Hatóságnál (NAIH).</p>
-
-              <h4>11. A Tájékoztató módosítása</h4>
-              <p>A SolarynNetwork fenntartja a jogot, hogy a jelen Adatkezelési Tájékoztatót bármikor módosítsa. A módosításokról a felhasználók a Discord szerveren értesülhetnek.</p>
-            </div>
-
-            <div class="legal-panel" data-legal-panel="impresszum">
-              <h3>Impresszum</h3>
-
-              <h4>Üzemeltető adatai</h4>
-              <p><b>Üzemeltető neve:</b> SolarynNetwork<br><b>Képviselő:</b> Nagy Szabolcs<br><b>Székhely:</b> Budapest, Magyarország<br><b>Weboldal:</b> www.solaryn.hu<br><b>Kapcsolat:</b> Discord szerveren keresztül</p>
-              <p>A SolarynNetwork magánszemély által üzemeltetett online szolgáltatás és Minecraft játékszerver.</p>
-
-              <h4>Kapcsolattartás</h4>
-              <p>A felhasználók Discord szerveren vagy a weboldalon keresztüli üzenetküldéssel vehetik fel a kapcsolatot az üzemeltetővel, aki a beérkező megkeresésekre ésszerű időn belül válaszol.</p>
-
-              <h4>A szolgáltatás jellege</h4>
-              <p>A SolarynNetwork egy online Minecraft játékszerver, amely digitális termékeket, rangokat, csomagokat és egyéb játékbeli szolgáltatásokat kínál.</p>
-
-              <h4>Felelősség</h4>
-              <p>Az üzemeltető mindent megtesz a weboldal és a szerver zavartalan működéséért, azonban a szolgáltatás esetleges hibáiért, leállásaiért vagy adatvesztésért felelősséget nem vállal, kivéve ha a hiba bizonyíthatóan az üzemeltető hibájából ered.</p>
-
-              <h4>Jognyilatkozat</h4>
-              <p>A weboldalon és a szerveren található tartalmak a SolarynNetwork tulajdonát képezik. A tartalmak másolása, terjesztése vagy felhasználása kizárólag az üzemeltető engedélyével lehetséges.</p>
-
-              <h4>Jogviták rendezése</h4>
-              <p>A szolgáltatásra a magyar jog az irányadó. Jogvita esetén a felek elsősorban békés úton próbálják rendezni a problémát.</p>
-            </div>
-          </div>
-        </section>
-
-      </div>
-
-      <footer class="app-footer">
-        <span>&copy; 2026 <a href="#" data-legal-link="impresszum">Impresszum</a> | <a href="#" data-legal-link="aszf">ÁSZF</a> | <a href="#" data-legal-link="adatkezeles">Adatvédelem</a></span>
-        <span class="app-footer-right"><a href="#" id="btnCookieSettings">Süti beállítások</a></span>
-      </footer>
+        </div>
     </div>
-  </main>
 
-  <!-- Süti beállítások modál -->
-  <div class="modal-overlay hidden" id="cookieModal">
-    <div class="modal-card cookie-modal">
-      <h3>Süti beállítások</h3>
-      <p>A SolarCenter a bejelentkezésed megtartásához nélkülözhetetlen sütiket használ. Ezeken felül nem gyűjtünk követő vagy marketing célú adatokat.</p>
-      <div class="cookie-options">
-        <label class="check-row"><input type="checkbox" checked disabled /> Nélkülözhetetlen sütik (bejelentkezés) - mindig aktív</label>
-        <label class="check-row"><input type="checkbox" id="cookieAnalytics" /> Anonim, összesített használati statisztika</label>
-      </div>
-      <div class="modal-actions">
-        <button class="btn-outline" id="cookieRejectAll">Csak a szükséges</button>
-        <button class="btn-glow" id="cookieSaveBtn">Mentés</button>
-      </div>
+    <div id="impix-alert" class="custom-alert-overlay">
+        <div class="custom-alert-box">
+            <div class="custom-alert-header">
+                <span class="custom-alert-logo">IMPIX</span> ÉRTESÍTÉS
+            </div>
+            <div id="impix-alert-message" class="custom-alert-body">
+            </div>
+            <div class="custom-alert-footer">
+                <button id="impix-alert-btn" class="custom-alert-close-btn">OK</button>
+            </div>
+        </div>
     </div>
-  </div>
-
-  <script src="skin3d.js"></script>
-  <script src="app.js"></script>
 </body>
+
 </html>
