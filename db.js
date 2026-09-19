@@ -1,4 +1,5 @@
-﻿import { DatabaseSync } from 'node:sqlite';
+﻿import './env.js';
+import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

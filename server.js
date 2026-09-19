@@ -1,4 +1,5 @@
-﻿import express from 'express';
+﻿import './env.js'; // .env fájl betöltése (az elsőnek kell lennie: a többi modul a környezeti változókat olvassa)
+import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Transform } from 'node:stream';
@@ -8,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import db, { tx, seed } from './db.js';
 import { hashPassword, verifyPassword, verifyDummy, hashToken, newToken } from './security.js';
 
-const PORT = Number(process.env.PORT) || 3000;
+// Pterodactyl panelen a kiosztott portot a SERVER_PORT változó adja
+const PORT = Number(process.env.PORT || process.env.SERVER_PORT) || 3000;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 2048;
 const MAX_UPLOAD = MAX_UPLOAD_MB * 1024 * 1024;
 const DATA_DIR = process.env.IMPIX_DB ? path.dirname(path.resolve(process.env.IMPIX_DB)) : path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
