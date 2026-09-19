@@ -4,7 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
+import http from 'node:http';
+import https from 'node:https';
+import tls from 'node:tls';
+import { randomBytes, createHmac, timingSafeEqual, X509Certificate } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import db, { tx, seed } from './db.js';
 import { hashPassword, verifyPassword, verifyDummy, hashToken, newToken } from './security.js';
@@ -227,6 +230,8 @@ const publicUser = (u) => ({
 function safeJson(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
 
 // ---------- Express ----------
+
+let tlsExpiresAt = null;
 
 const app = express();
 app.disable('x-powered-by');
@@ -590,6 +595,7 @@ admin.get('/stats', (req, res) => {
     revenueTotal: one('SELECT COALESCE(SUM(amount),0) s FROM payments').s,
     titles: one('SELECT COUNT(*) c FROM titles').c,
     newRecommendations: newRecommendationCount(),
+    tlsExpiresAt, // HTTPS tanúsítvány lejárata (null, ha a szerver nem maga szolgál ki HTTPS-t)
     byPlan: db.prepare(`
       SELECT p.name, COUNT(s.id) AS count FROM plans p
       LEFT JOIN subscriptions s ON s.plan_id = p.id AND s.expires_at > ?
@@ -908,5 +914,64 @@ setInterval(() => db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Da
 sweepMedia();
 setInterval(sweepMedia, 3600_000).unref();
 
-const server = app.listen(PORT, () => console.log(`Impix fut: http://localhost:${PORT}`));
+// ---------- HTTP / HTTPS indítás ----------
+// Ha van tanúsítvány (tls/fullchain.pem + tls/privkey.pem, vagy TLS_CERT / TLS_KEY), a szerver maga szolgál ki HTTPS-t.
+// Ez olyan tárhelyen kell, ahol nincs előtte nginx (pl. Pterodactyl). Tanúsítványcserénél nem kell újraindítani.
+
+const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
+const TLS_CERT = process.env.TLS_CERT || path.join(APP_DIR, 'tls', 'fullchain.pem');
+const TLS_KEY = process.env.TLS_KEY || path.join(APP_DIR, 'tls', 'privkey.pem');
+const USE_TLS = fs.existsSync(TLS_CERT) && fs.existsSync(TLS_KEY);
+
+// Beolvassa és ellenőrzi a tanúsítvány–kulcs párt. A lejáratot csak érvényes pár esetén jegyezzük meg.
+function loadTls() {
+  const cert = fs.readFileSync(TLS_CERT);
+  const key = fs.readFileSync(TLS_KEY);
+  const validTo = new Date(new X509Certificate(cert).validTo).getTime();
+  tls.createSecureContext({ cert, key }); // hibát dob, ha a kulcs nem ehhez a tanúsítványhoz tartozik
+  tlsExpiresAt = validTo;
+  return { cert, key };
+}
+const tlsStamp = () => [TLS_CERT, TLS_KEY].map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join('-');
+
+let server;
+if (USE_TLS) {
+  let creds;
+  try { creds = loadTls(); } catch (err) {
+    console.error(`HIBA: a HTTPS tanúsítvány nem tölthető be (${err.message}).`);
+    console.error(`Ellenőrizd a fájlokat: ${TLS_CERT} és ${TLS_KEY}`);
+    process.exit(1);
+  }
+  server = https.createServer(creds, app);
+
+  // Percenként megnézzük, cserélődtek-e a fájlok, és ha igen, újraindítás nélkül átvesszük az újat.
+  let applied = tlsStamp();
+  let failedFor = null;
+  setInterval(() => {
+    const stamp = tlsStamp();
+    if (stamp === applied) return;
+    try {
+      server.setSecureContext(loadTls()); // loadTls() előbb ellenőrzi a párt: hibás pár mellett a futó szerverhez nem nyúlunk
+      applied = stamp;
+      failedFor = null;
+      console.log(`HTTPS tanúsítvány frissítve, lejár: ${new Date(tlsExpiresAt).toLocaleDateString('hu-HU')}`);
+    } catch (err) {
+      // Pl. a tanúsítvány már felkerült, de a kulcs még nem: a következő percben újra próbáljuk.
+      if (failedFor !== stamp) { console.error(`HTTPS tanúsítvány frissítése sikertelen (${err.message}). Újrapróbálom.`); failedFor = stamp; }
+    }
+  }, 60_000).unref();
+} else {
+  server = http.createServer(app);
+}
+
+server.listen(PORT, () => {
+  console.log(`Impix fut: ${USE_TLS ? 'https' : 'http'}://localhost:${PORT}`);
+  if (USE_TLS) {
+    const days = Math.floor((tlsExpiresAt - Date.now()) / 86_400_000);
+    console.log(`HTTPS aktív. A tanúsítvány lejár: ${new Date(tlsExpiresAt).toLocaleDateString('hu-HU')} (${days} nap múlva).`);
+    if (days < 21) console.warn('FIGYELEM: a tanúsítvány hamarosan lejár, újítsd meg!');
+  } else {
+    console.warn('FIGYELEM: nincs HTTPS tanúsítvány, a szerver titkosítatlan HTTP-n fut (csak tesztre jó).');
+  }
+});
 server.requestTimeout = 60 * 60_000; // nagy videófeltöltésekhez

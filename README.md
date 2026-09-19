@@ -123,3 +123,5 @@ Beágyazott (Videa/YouTube/Vimeo) videónál a lejátszó külső oldalon fut: o
   vagy kikapcsolt JavaScripttel megkerülhető, és a hálózati forgalomból a közvetlen videólinkek kiolvashatók. A tartalom valódi
   védelméhez DRM-es streaming szolgáltatás kell. A feltöltött fájlokat aláírt, lejáró linkek védik, a külső (link) videókat nem.
 - A `data/` mappa az adatbázist és a feltöltött videókat tartalmazza – ne verziókezeld, és készíts róla mentést.
+
+> **Olyan tárhelyen, ahol nincs nginx és nincs root (pl. Pterodactyl):** a szerver maga tud HTTPS-t kiszolgálni. Útmutató: [DEPLOY-PTERODACTYL.md](DEPLOY-PTERODACTYL.md).

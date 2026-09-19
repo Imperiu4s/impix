@@ -3,3 +3,6 @@ data/
 .claude/
 *.log
 .env
+tls/
+tools/get-cert/node_modules/
+tools/get-cert/account.key

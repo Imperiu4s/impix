@@ -1,0 +1,10 @@
+{
+  "name": "impix-get-cert",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ingyenes HTTPS tanúsítvány (Let's Encrypt) kérése az Impix szerverhez, DNS-ellenőrzéssel. A saját gépeden fut, nem a szerveren.",
+  "type": "module",
+  "dependencies": {
+    "acme-client": "^5.4.0"
+  }
+}

@@ -1061,7 +1061,12 @@ const stat = (label, value, sub) => html`<div class="card stat"><div class="labe
 
 async function adminOverview(s) {
   const max = Math.max(1, ...s.byPlan.map((p) => p.count));
+  const tlsDays = s.tlsExpiresAt ? Math.ceil((s.tlsExpiresAt - Date.now()) / 86_400_000) : null;
   return html`
+    ${tlsDays !== null && tlsDays <= 21 && html`<div class="banner" role="alert">
+      <div><strong>${tlsDays > 0 ? `A HTTPS tanúsítvány ${tlsDays} nap múlva lejár.` : 'A HTTPS tanúsítvány lejárt!'}</strong>
+        <div class="muted">Futtasd újra a <code>tools/get-cert/get-cert.bat</code> fájlt a gépeden, és töltsd fel az új <code>tls</code> mappát a szerverre. Újraindítás nem kell.</div></div>
+    </div>`}
     ${s.newRecommendations > 0 && html`<div class="banner"><div><strong>${s.newRecommendations} új ajánlás</strong> vár elbírálásra a felhasználóktól.</div><a class="btn primary" href="#/admin/recs">Megnézem</a></div>`}
     <div class="stats">
       ${stat('Felhasználók', s.users, `+${s.newUsers} az elmúlt 7 napban`)}
