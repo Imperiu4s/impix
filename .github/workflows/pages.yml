@@ -1,1 +1,46 @@
+name: Weboldal kitétele GitHub Pagesre
 
+# Csak a public/ mappa (a weboldal) kerül a Pagesre. A Node szerver (server.js) külön tárhelyen fut.
+on:
+  push:
+    branches: [main]
+    paths: ['public/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: API cím beírása (config.js)
+        env:
+          API_URL: ${{ vars.IMPIX_API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "::error::Hiányzik az IMPIX_API_URL repository-változó (Settings → Secrets and variables → Actions → Variables)."
+            exit 1
+          fi
+          node -e "require('fs').writeFileSync('public/config.js', 'window.IMPIX_CONFIG = ' + JSON.stringify({ apiBase: process.env.API_URL }) + ';\n')"
+          cat public/config.js
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
