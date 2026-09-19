@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Impix</title>
+  <meta name="description" content="Impix – filmek és sorozatok korlátlanul.">
+  <!-- GitHub Pages nem tud HTTP fejlécet küldeni, ezért a tartalombiztonsági szabály itt van. Csak saját szkript futhat. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src *; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; frame-src https://videa.hu https://*.videa.hu https://www.youtube-nocookie.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e50914'/%3E%3Cpath d='M12 9l12 7-12 7z' fill='white'/%3E%3C/svg%3E">
+  <!-- Relatív útvonalak: így alútvonalon (GitHub Pages: felhasznalo.github.io/repo/) is működik -->
+  <script src="config.js"></script>
+  <script src="protect.js"></script>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="nav"></div>
+  <main id="app" tabindex="-1"></main>
+  <div id="modal-root"></div>
+  <div id="toasts" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>
