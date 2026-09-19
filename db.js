@@ -1,11 +1,13 @@
 ﻿import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dataDir = fileURLToPath(new URL('./data/', import.meta.url));
-fs.mkdirSync(dataDir, { recursive: true });
+const dbFile = process.env.IMPIX_DB || `${dataDir}impix.db`;
+fs.mkdirSync(path.dirname(path.resolve(dbFile)), { recursive: true }); // csak arra a mappára van szükség, ahová az adatbázis kerül
 
-const db = new DatabaseSync(process.env.IMPIX_DB || `${dataDir}impix.db`);
+const db = new DatabaseSync(dbFile);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 
 db.exec(`

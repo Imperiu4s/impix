@@ -1,0 +1,4 @@
+# A szerveren futó fájlok mindig LF sorvégűek legyenek (Windowson szerkesztve is)
+*.sh text eol=lf
+deploy/* text eol=lf
+*.js text eol=lf

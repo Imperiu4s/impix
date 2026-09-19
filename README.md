@@ -39,6 +39,9 @@ Környezeti változók:
 
 ## Üzemeltetés: weboldal GitHubon (Pages) + Node szerver külön
 
+> **Lépésről lépésre útmutató az impix.hu élesítéséhez (Rackhost DNS, Ubuntu VPS, GitHub Pages): [DEPLOY.md](DEPLOY.md).**
+> A szerver telepítő szkriptjei a `deploy/` mappában vannak.
+
 A `public/` mappa (a weboldal) automatikusan kikerül **GitHub Pagesre**, a Node szerver (`server.js`) pedig külön tárhelyen fut
 (VPS, Render, Railway, Fly.io stb. – GitHub Pages csak statikus fájlokat tud kiszolgálni).
 

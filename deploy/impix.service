@@ -1,0 +1,31 @@
+[Unit]
+Description=Impix streaming szerver
+After=network.target
+
+[Service]
+Type=simple
+User=impix
+Group=impix
+WorkingDirectory=/opt/impix
+EnvironmentFile=/etc/impix.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+
+# Az adatbázis és a feltöltött videók helye: /var/lib/impix (a systemd hozza létre, az impix felhasználó tulajdona)
+StateDirectory=impix
+StateDirectoryMode=0750
+
+# Keményítés: a szolgáltatás csak a saját adatmappájába írhat
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
