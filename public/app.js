@@ -1467,6 +1467,12 @@ forms.modal = async (_, form) => {
 //  Indítás
 // ==========================================================
 
+// A régi Impix oldal service workerének és gyorsítótárának eltakarítása (az új oldal nem használ ilyet)
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((list) => list.forEach((r) => r.unregister())).catch(() => {});
+}
+if (window.caches) caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
+
 (async function boot() {
   try { await refreshMe(); applyServerPrefs(state.user); } catch { /* offline: vendégként indul */ }
   await route();
