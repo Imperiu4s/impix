@@ -24,7 +24,14 @@ const VIDEO_DIR = path.join(DATA_DIR, 'videos');
 const VIDEO_EXT = ['mp4', 'm4v', 'webm', 'ogv'];
 const MEDIA_RE = /^[a-f0-9]{32}\.(mp4|m4v|webm|ogv)$/;
 const AGES = [0, 6, 12, 16, 18];
+// Borítóképek: nem titkosak (a címlapon látszanak), ezért nyilvános, kitalálhatatlan nevű fájlok
+const COVER_DIR = path.join(DATA_DIR, 'covers');
+const COVER_RE = /^[a-f0-9]{32}\.(jpg|png|webp)$/;
+const MAX_COVER = 8 * 1024 * 1024;
+// A jogi szövegek (ÁSZF, adatkezelési tájékoztató) változata; a hozzájárulásokkal együtt naplózzuk
+const LEGAL_VERSION = '2026-09-20';
 fs.mkdirSync(VIDEO_DIR, { recursive: true });
+fs.mkdirSync(COVER_DIR, { recursive: true });
 
 // Melyik weboldalakról (pl. GitHub Pages) hívhatja az API-t: CORS_ORIGINS=https://felhasznalo.github.io,https://www.impix.hu
 const CORS_ORIGINS = new Set((process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean));
@@ -179,6 +186,37 @@ function sweepMedia() {
   }
 }
 
+// ---- Borítóképek ----
+
+// A kép típusát a tartalma dönti el (nem a fájlnév). SVG nem engedett: abba szkript ágyazható.
+function imageExt(buf) {
+  if (buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+  if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return 'webp';
+  return null;
+}
+// Az űrlapból érkező borítókép-fájlnév (üres = nincs megadva)
+function coverName(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const s = String(v);
+  if (!COVER_RE.test(s) || !fs.existsSync(path.join(COVER_DIR, s))) fail('A borítókép nem található. Tölts fel egy képet.');
+  return s;
+}
+// Törli a borítóképet, ha már egy tartalom sem használja
+function releaseCover(file) {
+  if (!file || !COVER_RE.test(file)) return;
+  if (!db.prepare('SELECT COUNT(*) c FROM titles WHERE poster = ?').get(file).c) fs.rm(path.join(COVER_DIR, file), { force: true }, () => {});
+}
+function sweepCovers() {
+  const cutoff = Date.now() - 3600_000;
+  for (const file of fs.readdirSync(COVER_DIR)) {
+    try {
+      if (fs.statSync(path.join(COVER_DIR, file)).mtimeMs < cutoff) releaseCover(file);
+    } catch { /* közben törlődött */ }
+  }
+}
+
 async function looksLikeVideo(file, ext) {
   const fh = await fs.promises.open(file, 'r');
   try {
@@ -305,7 +343,7 @@ app.use((req, res, next) => {
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'same-origin',
     'Content-Security-Policy':
-      "default-src 'self'; img-src 'self' data:; media-src *; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; " +
+      "default-src 'self'; img-src 'self' data: https:; media-src *; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; " +
       'frame-src https://videa.hu https://*.videa.hu https://www.youtube-nocookie.com https://player.vimeo.com',
   });
   next();
@@ -347,7 +385,7 @@ app.use('/api', (req, res, next) => {
     if (!ok) return res.status(403).json({ error: 'Érvénytelen kérés eredet.' });
   }
   // A videófeltöltés nyers fájltörzs; egyéni fejléc kell hozzá (ezt idegen oldal nem küldhet preflight nélkül).
-  if (req.path === '/admin/upload') return next();
+  if (req.path === '/admin/upload' || req.path === '/admin/cover') return next();
   if (!req.is('application/json')) return res.status(415).json({ error: 'JSON kérés szükséges.' });
   next();
 });
@@ -411,13 +449,33 @@ function throttle(key) {
   attempts.set(key, rec);
 }
 
+// Hozzájárulások naplója: ki, mit, mikor fogadott el, és a jogi szövegek melyik változatára
+function recordConsent(userId, kind, planId = null) {
+  db.prepare('INSERT INTO consents (user_id, kind, version, plan_id, created_at) VALUES (?,?,?,?,?)').run(userId, kind, LEGAL_VERSION, planId, Date.now());
+}
+
+// A jogi oldalak (ÁSZF, adatkezelés, impresszum) a szolgáltató adataival töltődnek ki; ezeket a .env adja
+app.get('/api/legal', (req, res) => {
+  const s = sellerConfig();
+  const e = (k) => (process.env[k] || '').trim();
+  res.json({
+    version: LEGAL_VERSION,
+    name: s.name, address: s.address, taxId: s.taxId, email: s.email,
+    phone: e('SELLER_PHONE'), regNumber: e('SELLER_REG_NUMBER'), regLabel: e('SELLER_REG_LABEL'),
+    hostingName: e('HOSTING_NAME'), hostingAddress: e('HOSTING_ADDRESS'), hostingEmail: e('HOSTING_EMAIL'),
+    siteUrl: e('SITE_URL') || 'https://impix.hu',
+  });
+});
+
 app.post('/api/register', (req, res) => {
   const name = str(req.body.name, 'Név', { min: 2, max: 60 });
   const mail = email(req.body.email);
   const pass = password(req.body.password);
+  if (req.body.acceptTerms !== true) fail('A regisztrációhoz el kell fogadnod az ÁSZF-et és az Adatkezelési tájékoztatót.');
   if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(mail)) fail('Ezzel az e-mail címmel már van fiók.', 409);
   const id = Number(db.prepare('INSERT INTO users (email, name, password_hash, created_at) VALUES (?,?,?,?)')
     .run(mail, name, hashPassword(pass), Date.now()).lastInsertRowid);
+  recordConsent(id, 'terms_privacy');
   const session = startSession(req, res, id);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   res.status(201).json({ user: publicUser(user), subscription: null, ...session });
@@ -525,6 +583,13 @@ function assertCanBuy(cur) {
   }
 }
 
+// Vásárláskor kifejezett hozzájárulás kell: elfogadta az ÁSZF-et, kéri a szolgáltatás azonnali megkezdését, és tudomásul veszi,
+// hogy a teljesítés megkezdése után elveszíti az elállási jogát (45/2014. Korm. rendelet).
+function requirePurchaseConsent(req, plan) {
+  if (req.body.consent !== true) fail('A vásárláshoz el kell fogadnod az ÁSZF-et, és nyilatkoznod kell a szolgáltatás azonnali megkezdéséről.');
+  recordConsent(req.user.id, 'purchase_immediate_start', plan.id);
+}
+
 // Fizetés indítása (Stripe Checkout). A válaszban kapott címre kell átirányítani a felhasználót.
 app.post('/api/checkout', requireAuth, async (req, res) => {
   if (!billing.enabled) fail('A bankkártyás fizetés még nincs beállítva.', 503);
@@ -537,6 +602,7 @@ app.post('/api/checkout', requireAuth, async (req, res) => {
     await billing.reactivate(req.user.id);
     return res.json({ reactivated: true, subscription: subView(getSub(req.user.id)) });
   }
+  requirePurchaseConsent(req, plan);
   res.json({ url: await billing.createCheckout(req.user, plan) });
 });
 
@@ -559,6 +625,7 @@ app.post('/api/subscription', requireAuth, (req, res) => {
   const uid = req.user.id;
   const cur = getSub(uid);
   assertCanBuy(cur);
+  requirePurchaseConsent(req, plan);
   tx(() => {
     if (!cur) {
       db.prepare('INSERT INTO subscriptions (user_id, plan_id, status, started_at, expires_at) VALUES (?,?,?,?,?)')
@@ -601,7 +668,7 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
 // ---------- Tartalom ----------
 
 const TITLE_PUBLIC = `t.id, t.type, t.title, t.description, t.year, t.genre, t.age, t.rating,
-  t.duration_min, t.hue, t.featured,
+  t.duration_min, t.hue, t.poster, t.featured,
   (SELECT COUNT(*) FROM episodes e WHERE e.title_id = t.id) AS episode_count,
   (SELECT COUNT(DISTINCT season) FROM episodes e WHERE e.title_id = t.id) AS season_count,
   CASE WHEN t.type = 'movie'
@@ -707,6 +774,15 @@ app.get('/media/:file', (req, res) => {
   if (!viewer || !hasAccess(viewer)) return res.status(402).end();
   res.sendFile(path.join(VIDEO_DIR, file), {
     headers: { 'Cache-Control': 'private, max-age=0', 'Content-Disposition': 'inline', 'X-Content-Type-Options': 'nosniff' },
+  }, (err) => { if (err && !res.headersSent) res.status(err.statusCode || 404).end(); });
+});
+
+// Borítóképek: nyilvánosak (a fájlnév kitalálhatatlan), hosszan gyorsítótárazhatók, mert a fájl sosem változik.
+app.get('/covers/:file', (req, res) => {
+  const { file } = req.params;
+  if (!COVER_RE.test(file)) return res.status(404).end();
+  res.sendFile(path.join(COVER_DIR, file), {
+    headers: { 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin' },
   }, (err) => { if (err && !res.headersSent) res.status(err.statusCode || 404).end(); });
 });
 
@@ -1018,6 +1094,18 @@ admin.put('/upload', async (req, res) => {
   res.status(201).json({ url: `/media/${file}`, size });
 });
 
+// Borítókép feltöltése: nyers képtörzs (PUT), legfeljebb 8 MB. A típust a tartalom dönti el (JPEG, PNG vagy WebP).
+admin.put('/cover', express.raw({ type: () => true, limit: MAX_COVER }), async (req, res) => {
+  if (req.get('x-impix-upload') !== '1') fail('Hibás feltöltési kérés.');
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf) || !buf.length) fail('Nem érkezett kép.');
+  const ext = imageExt(buf);
+  if (!ext) fail('A borítókép JPEG, PNG vagy WebP formátumú legyen.', 415);
+  const file = `${randomBytes(16).toString('hex')}.${ext}`;
+  await fs.promises.writeFile(path.join(COVER_DIR, file), buf);
+  res.status(201).json({ poster: file, size: buf.length });
+});
+
 // Kiállított számlák (könyveléshez): a PDF a /api/invoices/:id/pdf címen tölthető le
 admin.get('/invoices', (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
@@ -1070,7 +1158,9 @@ function titleInput(b) {
     age,
     rating: num(b.rating, 'Értékelés', 0, 10),
     duration_min: type === 'movie' ? int(b.duration_min, 'Hossz (perc)', 1, 1000) : null,
-    hue: int(b.hue, 'Színárnyalat', 0, 359),
+    // Tartalék háttérszín arra az esetre, ha a borítókép nem tölt be; az űrlapon nem kell megadni
+    hue: b.hue === undefined || b.hue === '' || b.hue === null ? null : int(b.hue, 'Színárnyalat', 0, 359),
+    poster: coverName(b.poster),
     // A videó három minőségi változata (alap 720p; a Full HD és a 4K nem kötelező). Sorozatnál az epizódoknál adják meg.
     ...(type === 'movie' ? videoSources(b) : { video_url: null, video_url_1080: null, video_url_2160: null }),
     featured: b.featured ? 1 : 0,
@@ -1080,27 +1170,32 @@ const sourceList = (row) => (row ? [row.video_url, row.video_url_1080, row.video
 
 admin.post('/titles', (req, res) => {
   const t = titleInput(req.body);
-  const id = Number(db.prepare(`INSERT INTO titles (type,title,description,year,genre,age,rating,duration_min,hue,video_url,video_url_1080,video_url_2160,featured,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, t.hue, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, Date.now()).lastInsertRowid);
+  if (!t.poster) fail('A borítókép kötelező: tölts fel egy képet (JPEG, PNG vagy WebP).');
+  const hue = t.hue ?? Math.floor(Math.random() * 360);
+  const id = Number(db.prepare(`INSERT INTO titles (type,title,description,year,genre,age,rating,duration_min,hue,poster,video_url,video_url_1080,video_url_2160,featured,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, hue, t.poster, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, Date.now()).lastInsertRowid);
   res.status(201).json({ id });
 });
 admin.patch('/titles/:id', (req, res) => {
   const t = titleInput(req.body);
   const id = Number(req.params.id);
-  const old = db.prepare('SELECT video_url, video_url_1080, video_url_2160 FROM titles WHERE id = ?').get(id);
+  const old = db.prepare('SELECT video_url, video_url_1080, video_url_2160, poster FROM titles WHERE id = ?').get(id);
   if (!old) fail('A tartalom nem található.', 404);
-  db.prepare(`UPDATE titles SET type=?,title=?,description=?,year=?,genre=?,age=?,rating=?,duration_min=?,hue=?,video_url=?,video_url_1080=?,video_url_2160=?,featured=? WHERE id=?`)
-    .run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, t.hue, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, id);
+  // Borítókép nélkül a meglévő marad; a szín is csak akkor változik, ha megadták
+  db.prepare(`UPDATE titles SET type=?,title=?,description=?,year=?,genre=?,age=?,rating=?,duration_min=?,hue=COALESCE(?,hue),poster=COALESCE(?,poster),video_url=?,video_url_1080=?,video_url_2160=?,featured=? WHERE id=?`)
+    .run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, t.hue, t.poster, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, id);
   sourceList(old).forEach(releaseMedia); // amire már semmi nem hivatkozik, az törlődik
+  releaseCover(old.poster);
   res.json({ ok: true });
 });
 admin.delete('/titles/:id', (req, res) => {
   const id = Number(req.params.id);
-  const t = db.prepare('SELECT video_url, video_url_1080, video_url_2160 FROM titles WHERE id = ?').get(id);
+  const t = db.prepare('SELECT video_url, video_url_1080, video_url_2160, poster FROM titles WHERE id = ?').get(id);
   if (!t) fail('A tartalom nem található.', 404);
   const sources = [...sourceList(t), ...db.prepare('SELECT video_url, video_url_1080, video_url_2160 FROM episodes WHERE title_id = ?').all(id).flatMap(sourceList)];
   db.prepare('DELETE FROM titles WHERE id = ?').run(id);
   sources.forEach(releaseMedia);
+  releaseCover(t.poster);
   res.json({ ok: true });
 });
 
@@ -1150,6 +1245,7 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   if (err instanceof HttpError || err.isHttp) return res.status(err.status).json({ error: err.message });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Hibás JSON.' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'A fájl túl nagy (a borítókép legfeljebb 8 MB lehet).' });
   if (typeof err.type === 'string' && err.type.startsWith('Stripe')) {
     // A Stripe hibáit a naplóba írjuk (kulcs nélkül), a felhasználónak általános üzenetet adunk
     console.error(`Stripe hiba: ${err.type} ${err.code || ''} ${err.message}`);
@@ -1162,6 +1258,8 @@ app.use((err, req, res, next) => {
 setInterval(() => db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now()), 3600_000).unref();
 sweepMedia();
 setInterval(sweepMedia, 3600_000).unref();
+sweepCovers();
+setInterval(sweepCovers, 3600_000).unref();
 
 // ---------- HTTP / HTTPS indítás ----------
 // Ha van tanúsítvány (tls/fullchain.pem + tls/privkey.pem, vagy TLS_CERT / TLS_KEY), a szerver maga szolgál ki HTTPS-t.

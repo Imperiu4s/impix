@@ -175,6 +175,19 @@ for (const table of ['titles', 'episodes']) {
   addColumn(table, 'video_url_2160', 'TEXT');
 }
 
+// Borítókép (feltöltött fájl neve a covers/ mappában; ha nincs, a `hue` színárnyalatból készül háttér)
+addColumn('titles', 'poster', 'TEXT');
+// Elfogadott feltételek naplója (ÁSZF és adatkezelési tájékoztató elfogadása regisztrációkor, a digitális szolgáltatás
+// azonnali megkezdésére adott hozzájárulás vásárláskor). Bizonyíthatóság: ki, mit, mikor, a szöveg melyik változatára.
+db.exec(`CREATE TABLE IF NOT EXISTS consents (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,
+  version    TEXT NOT NULL,
+  plan_id    INTEGER,
+  created_at INTEGER NOT NULL
+)`);
+
 // Tranzakció. Egymásba ágyazható: a belső hívás a külső tranzakció része lesz, hiba esetén az egész visszagörgetődik.
 let txDepth = 0;
 export function tx(fn) {

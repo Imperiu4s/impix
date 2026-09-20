@@ -117,26 +117,34 @@ function scheduleExpiry() {
   expiryTimer = setTimeout(wait > MAX_TIMEOUT ? scheduleExpiry : onExpiry, Math.max(0, Math.min(wait, MAX_TIMEOUT)));
 }
 
-async function onExpiry() {
-  try { await refreshMe(true); } catch { return; } // hálózati hiba: a következő kérésnél a szerver úgyis 402-t ad
-  if (!state.user || hasAccess()) return renderNav(); // megújult
+// Friss állapot a szervertől; ha közben megszűnt a hozzáférés (lejárt, az admin törölte vagy megszüntette), kidobjuk a felhasználót
+async function checkAccess(sync = false) {
+  try { await refreshMe(sync); } catch { return; } // hálózati hiba: a következő kérésnél a szerver úgyis 402-t ad
+  if (!state.user) { renderNav(); navigate('/login'); return; } // a munkamenet megszűnt (pl. tiltás)
   renderNav();
-  if (isCatalogPath(currentRoute().path)) kickToPlans('Lejárt az előfizetésed. Új csomag vásárlásával folytathatod a nézést.');
-  else if (['/account', '/plans'].includes(currentRoute().path)) refresh();
+  if (hasAccess()) return; // megújult
+  const { path } = currentRoute();
+  if (isCatalogPath(path)) kickToPlans('Az előfizetésed megszűnt vagy lejárt. Válassz új csomagot a folytatáshoz.');
+  else if (['/account', '/plans', '/checkout'].some((p) => path.startsWith(p))) refresh();
 }
+const onExpiry = () => checkAccess(true);
 
-// A lejárt előfizetésű felhasználó a Csomagok oldalra kerül
+// A főoldalra kerül, ahol előbb csomagot kell választania
 function kickToPlans(message) {
   stopWatching();
   closeModal(true);
   if (message) toast(message, 'error');
-  navigate('/plans', { replace: true });
+  navigate('/', { replace: true });
 }
 
-// A háttérben töltött fülben az időzítő késhet: visszatéréskor azonnal ellenőrzünk
+// Az admin által törölt vagy megszüntetett előfizetést is hamar észrevesszük: látható fülben 8 másodpercenként ellenőrzünk
+setInterval(() => {
+  if (!document.hidden && state.user && state.user.role !== 'admin' && hasAccess()) checkAccess();
+}, 8_000);
+
+// A háttérben töltött fülben az időzítők késhetnek: visszatéréskor azonnal ellenőrzünk
 document.addEventListener('visibilitychange', () => {
-  const s = state.sub;
-  if (!document.hidden && state.user && state.user.role !== 'admin' && s && s.state !== 'expired' && s.expires_at <= serverNow()) onExpiry();
+  if (!document.hidden && state.user && state.user.role !== 'admin') checkAccess(state.sub && state.sub.expires_at <= serverNow());
 });
 async function getPlans(force) {
   if (!state.plans || force) state.plans = await api('/plans');
@@ -149,7 +157,13 @@ function applyServerPrefs(user) {
 
 // ---------- Vizuális elemek ----------
 
-const poster = (t) => html`
+// A borítóképek a szerverről jönnek (/covers/…). Ha egy tartalomnak nincs képe, a színárnyalatból készül háttér a címmel.
+const coverUrl = (file) => `${API_BASE}/covers/${file}`;
+const poster = (t) => t.poster ? html`
+  <div class="poster has-img" style="--h:${t.hue}">
+    <img src="${coverUrl(t.poster)}" alt="${t.title}" loading="lazy" draggable="false">
+    <span class="poster-badge">${t.type === 'series' ? 'Sorozat' : 'Film'}</span>
+  </div>` : html`
   <div class="poster" style="--h:${t.hue}">
     <span class="poster-badge">${t.type === 'series' ? 'Sorozat' : 'Film'}</span>
     <strong>${t.title}</strong>
@@ -276,6 +290,7 @@ const routes = [
   [/^\/checkout\/(\d+)$/, ['id'], checkoutPage, 'auth'],
   [/^\/payment\/return$/, [], paymentReturnPage, 'auth'],
   [/^\/account$/, [], accountPage, 'auth'],
+  [/^\/(terms|privacy|imprint)$/, ['doc'], legalPage],
   [/^\/admin(?:\/(\w+))?$/, ['tab'], adminPage, 'admin'],
 ];
 
@@ -335,13 +350,14 @@ async function route(keepScroll = false) {
   if (guard === 'admin' && state.user.role !== 'admin') { navigate('/'); return; }
 
   // Lejárt (vagy nem is volt) előfizetéssel a tartalmi oldalak nem nyithatók meg, csak a Csomagok és a Fiók
+  // A főoldal ("/") maga kezeli: előfizetés nélkül a csomagválasztót mutatja
   if (state.user && isCatalogPath(path)) {
     const s = state.sub;
     if (s && s.state !== 'expired' && s.expires_at <= serverNow()) { try { await refreshMe(true); } catch { /* a szerver úgyis dönt */ } }
     if (my !== navId) return;
-    if (!hasAccess()) {
+    if (!hasAccess() && path !== '/') {
       stopWatching();
-      navigate('/plans', { replace: true });
+      navigate('/', { replace: true });
       return;
     }
   }
@@ -406,7 +422,7 @@ function renderNav() {
 
   $nav.innerHTML = html`
     <header class="nav">
-      <a class="logo" href="${u && !member ? '/plans' : '/'}" aria-label="Impix főoldal">IMPIX</a>
+      <a class="logo" href="/" aria-label="Impix főoldal">IMPIX</a>
       <nav class="nav-links" aria-label="Fő navigáció">${links}</nav>
       <div class="nav-spacer"></div>
       ${member && html`<form class="nav-search" data-form="search" role="search">
@@ -483,6 +499,20 @@ function fieldHtml(f) {
         <span class="upload-status muted" aria-live="polite"></span>
       </div>
       <progress class="hidden" max="100" value="0"></progress>`;
+  } else if (f.type === 'image') {
+    control = html`
+      <div class="cover-field">
+        <div class="cover-preview ${val ? '' : 'empty'}" data-cover-preview>${val ? html`<img src="${coverUrl(val)}" alt="A borítókép előnézete">` : html`<span>Nincs kép</span>`}</div>
+        <div class="cover-controls">
+          <input id="${id}" name="${f.name}" type="hidden" value="${val}">
+          <div class="upload-row">
+            <label class="btn sm" for="${id}_file">${val ? 'Kép cseréje' : 'Borítókép feltöltése'}</label>
+            <input class="sr-only" type="file" id="${id}_file" data-upload-for="${f.name}" data-kind="image" accept="image/jpeg,image/png,image/webp">
+            <span class="upload-status muted" aria-live="polite"></span>
+          </div>
+          <progress class="hidden" max="100" value="0"></progress>
+        </div>
+      </div>`;
   } else if (f.type === 'checkbox') {
     return html`<div class="field check" ${raw(showIf)}><input type="checkbox" id="${id}" name="${f.name}" ${val ? raw('checked') : ''}><label for="${id}">${f.label}</label></div>`;
   } else {
@@ -522,10 +552,11 @@ function syncShowIf() {
 
 const fmtSize = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`);
 
-function uploadVideo(file, onProgress) {
+// endpoint: 'upload' (videó) vagy 'cover' (borítókép)
+function uploadVideo(file, onProgress, endpoint = 'upload') {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('PUT', `${API_BASE}/api/admin/upload?name=${encodeURIComponent(file.name)}`);
+    xhr.open('PUT', `${API_BASE}/api/admin/${endpoint}?name=${encodeURIComponent(file.name)}`);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.setRequestHeader('X-Impix-Upload', '1');
     Object.entries(authHeaders()).forEach(([k, v]) => xhr.setRequestHeader(k, v));
@@ -549,13 +580,27 @@ async function handleUpload(input) {
   const field = input.closest('.field');
   const status = field.querySelector('.upload-status');
   const bar = field.querySelector('progress');
+  const isImage = input.dataset.kind === 'image';
+  if (isImage && (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 8 * 1024 * 1024)) {
+    toast('A borítókép JPEG, PNG vagy WebP legyen, legfeljebb 8 MB.', 'error');
+    input.value = '';
+    return;
+  }
   ctx.uploading = (ctx.uploading || 0) + 1;
   bar.classList.remove('hidden');
   bar.value = 0;
   status.textContent = `Feltöltés: ${file.name}…`;
   try {
-    const res = await uploadVideo(file, (p) => { bar.value = p; status.textContent = `Feltöltés: ${p}%`; });
-    form.elements[input.dataset.uploadFor].value = res.url;
+    const res = await uploadVideo(file, (p) => { bar.value = p; status.textContent = `Feltöltés: ${p}%`; }, isImage ? 'cover' : 'upload');
+    if (isImage) {
+      form.elements[input.dataset.uploadFor].value = res.poster;
+      const prev = field.querySelector('[data-cover-preview]');
+      prev.classList.remove('empty');
+      prev.innerHTML = html`<img src="${coverUrl(res.poster)}" alt="A borítókép előnézete">`.__html;
+      field.querySelector('label.btn').textContent = 'Kép cseréje';
+    } else {
+      form.elements[input.dataset.uploadFor].value = res.url;
+    }
     status.textContent = `Feltöltve: ${file.name} (${fmtSize(res.size)})`;
   } catch (err) {
     status.textContent = '';
@@ -713,6 +758,8 @@ function registerPage() {
           <div class="field"><label for="email">E-mail cím</label><input id="email" name="email" type="email" autocomplete="email" required></div>
           <div class="field"><label for="password">Jelszó</label><input id="password" name="password" type="password" autocomplete="new-password" minlength="8" required><span class="hint">Legalább 8 karakter.</span></div>
           <div class="field"><label for="password2">Jelszó megerősítése</label><input id="password2" name="password2" type="password" autocomplete="new-password" required></div>
+          <div class="field check consent"><input type="checkbox" id="acceptTerms" name="acceptTerms" required>
+            <label for="acceptTerms">Elfogadom az <a href="/terms" target="_blank" rel="noopener">Általános Szerződési Feltételeket</a>, és megismertem az <a href="/privacy" target="_blank" rel="noopener">Adatkezelési tájékoztatót</a>.</label></div>
           <p class="form-error" role="alert"></p>
           <button class="btn primary lg">Regisztráció</button>
         </form>
@@ -720,12 +767,62 @@ function registerPage() {
       </div>
     </div>`);
 }
-forms.register = async ({ name, email, password, password2 }) => {
+forms.register = async ({ name, email, password, password2, acceptTerms }) => {
   if (password !== password2) throw new Error('A két jelszó nem egyezik.');
+  if (acceptTerms !== 'on') throw new Error('A regisztrációhoz el kell fogadnod az ÁSZF-et és az Adatkezelési tájékoztatót.');
   // Regisztráció után a csomagválasztás a természetes következő lépés.
-  if (!state.returnTo) state.returnTo = '/plans';
-  afterAuth(await api('/register', { method: 'POST', body: { name, email, password } }));
+  if (!state.returnTo) state.returnTo = '/';
+  afterAuth(await api('/register', { method: 'POST', body: { name, email, password, acceptTerms: true } }));
 };
+
+// ==========================================================
+//  Jogi oldalak: ÁSZF, adatkezelési tájékoztató, impresszum (a szövegek a legal.js-ben vannak)
+// ==========================================================
+
+let legalInfo = null;
+const LEGAL_FIELD_NAMES = {
+  name: 'a szolgáltató neve', address: 'székhely', taxId: 'adószám', regNumber: 'nyilvántartási szám', email: 'e-mail cím', phone: 'telefonszám',
+  hostingName: 'tárhelyszolgáltató neve', hostingAddress: 'tárhelyszolgáltató címe', hostingEmail: 'tárhelyszolgáltató e-mail címe',
+};
+const LEGAL_LABEL_DEFAULT = 'cégjegyzékszám vagy egyéni vállalkozói nyilvántartási szám';
+
+// Szöveg -> biztonságos HTML: minden escape-elt, a {{helyőrzők}} a szolgáltató adataival töltődnek ki, **félkövér** és `kód`
+function legalText(str, info) {
+  return esc(str)
+    .replace(/\{\{(\w+)\}\}/g, (_, k) => {
+      if (k === 'regLabel') return esc(info.regLabel || LEGAL_LABEL_DEFAULT);
+      const v = info[k];
+      return v ? esc(v) : `<span class="legal-missing">[hiányzó adat: ${esc(LEGAL_FIELD_NAMES[k] || k)}]</span>`;
+    })
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`(.+?)`/g, '<code>$1</code>');
+}
+
+async function legalPage({ doc }) {
+  if (!legalInfo) { try { legalInfo = await api('/legal'); } catch { legalInfo = {}; } }
+  const info = legalInfo;
+  const d = window.IMPIX_LEGAL[doc];
+  const t = (s) => raw(legalText(s, info));
+  const others = [['terms', 'Általános Szerződési Feltételek'], ['privacy', 'Adatkezelési tájékoztató'], ['imprint', 'Impresszum']].filter(([k]) => k !== doc);
+  const incomplete = state.user && state.user.role === 'admin' && !(info.name && info.address && info.taxId && info.email);
+  return page(html`
+    <div class="page legal">
+      <h1 class="page-title">${d.title}</h1>
+      <p class="legal-lead">${d.lead}</p>
+      <p class="muted legal-meta">Hatályos: ${info.version || ''}</p>
+      ${incomplete && html`<div class="banner"><div><strong>Admin figyelmeztetés: a szolgáltató adatai még nincsenek megadva.</strong>
+        <div class="muted">A hiányzó részeket „[hiányzó adat]” jelzi. Add meg a szerver <code>.env</code> fájljában: SELLER_NAME, SELLER_ADDRESS, SELLER_TAX_ID, SELLER_EMAIL, SELLER_PHONE, SELLER_REG_NUMBER, HOSTING_NAME, HOSTING_ADDRESS, HOSTING_EMAIL. Az oldal kitöltés után magától frissül.</div></div></div>`}
+      ${d.sections.length > 6 && html`<nav class="legal-toc card" aria-label="Tartalomjegyzék"><strong>Tartalom</strong>
+        <ol>${d.sections.map((s, i) => html`<li><button type="button" class="link-btn" data-action="legalJump" data-id="legal-${i}">${s.h.replace(/^\d+\.\s*/, '')}</button></li>`)}</ol></nav>`}
+      ${d.sections.map((s, i) => html`
+        <section class="legal-sec" id="legal-${i}">
+          <h2>${s.h}</h2>
+          ${s.body.map((b) => Array.isArray(b) ? html`<ul>${b.map((li) => html`<li>${t(li)}</li>`)}</ul>` : html`<p>${t(b)}</p>`)}
+        </section>`)}
+      <div class="legal-links row">${others.map(([k, l]) => html`<a class="btn" href="/${k}">${l}</a>`)}</div>
+    </div>`);
+}
+actions.legalJump = (el) => { const target = document.getElementById(el.dataset.id); if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
 
 // ==========================================================
 //  Főoldal, katalógus, tartalom
@@ -733,6 +830,7 @@ forms.register = async ({ name, email, password, password2 }) => {
 
 async function homePage() {
   if (!state.user) return landingPage();
+  if (!hasAccess()) return plansPage(); // előfizetés nélkül (vagy lejárat után) a főoldal a csomagválasztó
 
   const titles = await api('/titles');
   if (!titles.length) return page(html`<div class="page">${emptyBox('Még nincs feltöltött tartalom.')}</div>`);
@@ -746,6 +844,7 @@ async function homePage() {
 
   return page(html`
     <section class="hero" style="--h:${hero.hue}">
+      ${hero.poster && html`<div class="hero-art" style="background-image:url('${coverUrl(hero.poster)}')"></div>`}
       <div class="hero-inner">
         ${titleMeta(hero)}
         <h1>${hero.title}</h1>
@@ -1161,6 +1260,8 @@ async function checkoutPage({ id }) {
         ${!reactivate && html`<p class="muted" style="font-size:.9rem">Az előfizetés havonta automatikusan megújul, amíg le nem mondod (a Fiók oldalon bármikor). A bankkártyás fizetést a Stripe kezeli: a kártyaadataidat mi nem látjuk és nem tároljuk.</p>`}
         ${state.payments === 'demo' && html`<p class="muted" style="font-size:.88rem">Bemutató üzemmód: valódi fizetés nem történik.</p>`}
         <form class="form" data-form="checkout" data-plan="${plan.id}">
+          ${!reactivate && html`<div class="field check consent"><input type="checkbox" id="consent" name="consent" required>
+            <label for="consent">Elfogadom az <a href="/terms" target="_blank" rel="noopener">ÁSZF</a>-et. Kifejezetten kérem, hogy a szolgáltatás nyújtása azonnal megkezdődjön, és tudomásul veszem, hogy ha a szolgáltatást a teljesítés megkezdése után teljes egészében nyújtották, elveszítem az elállási jogomat (ha a szolgáltatás nyújtása még nem fejeződött be, az elállási jog gyakorlásakor az addig igénybe vett részével arányos díjat kell megfizetnem). <a href="/terms" target="_blank" rel="noopener">Részletek az ÁSZF 9. pontjában.</a></label></div>`}
           <p class="form-error" role="alert"></p>
           <button class="btn primary lg">${reactivate ? 'Lemondás visszavonása' : state.payments === 'demo' ? 'Előfizetés (teszt)' : `Fizetés bankkártyával – ${fmtMoney(plan.price)}`}</button>
           <a class="btn ghost" href="/plans">Mégse</a>
@@ -1170,14 +1271,16 @@ async function checkoutPage({ id }) {
 }
 forms.checkout = async (data, form) => {
   const planId = Number(form.dataset.plan);
+  const consent = data.consent === 'on';
+  if (form.querySelector('[name="consent"]') && !consent) throw new Error('A vásárláshoz el kell fogadnod az ÁSZF-et, és nyilatkoznod kell a szolgáltatás azonnali megkezdéséről.');
   if (state.payments === 'demo') {
-    const res = await api('/subscription', { method: 'POST', body: { planId } });
+    const res = await api('/subscription', { method: 'POST', body: { planId, consent } });
     state.sub = res.subscription;
     toast('Az előfizetés sikeresen frissítve.');
     goTo('/account');
     return;
   }
-  const res = await api('/checkout', { method: 'POST', body: { planId } });
+  const res = await api('/checkout', { method: 'POST', body: { planId, consent } });
   if (res.reactivated) {
     state.sub = res.subscription;
     toast('A lemondás visszavonva, az előfizetés újra megújul.');
@@ -1642,8 +1745,9 @@ async function adminContent() {
   return html`
     <div class="toolbar"><button class="btn primary" data-action="titleNew">+ Új tartalom</button></div>
     ${A.titles.length ? html`<div class="table-wrap"><table>
-      <thead><tr><th>Cím</th><th>Típus</th><th>Műfaj</th><th>Év</th><th>Korhatár</th><th>Értékelés</th><th></th></tr></thead>
+      <thead><tr><th>Borító</th><th>Cím</th><th>Típus</th><th>Műfaj</th><th>Év</th><th>Korhatár</th><th>Értékelés</th><th></th></tr></thead>
       <tbody>${A.titles.map((t) => html`<tr>
+        <td>${t.poster ? html`<img class="thumb" src="${coverUrl(t.poster)}" alt="" loading="lazy">` : html`<span class="thumb none" title="Nincs borítókép, színes háttér látszik">–</span>`}</td>
         <td><strong>${t.title}</strong> ${t.featured ? html`<span class="badge info">Kiemelt</span>` : ''}</td>
         <td>${t.type === 'movie' ? 'Film' : `Sorozat (${t.episode_count} epizód)`}</td>
         <td>${t.genre}</td><td>${t.year}</td><td>${ageLabel(t.age)}</td><td>★ ${Number(t.rating).toFixed(1)}</td>
@@ -1677,7 +1781,8 @@ const titleFields = (t = {}) => [
   { name: 'age', label: 'Ajánlott életkor', type: 'select', value: t.age ?? 12, options: AGE_OPTIONS },
   { name: 'genre', label: 'Műfaj', value: t.genre },
   { name: 'rating', label: 'Értékelés (0–10)', type: 'number', step: '0.1', value: t.rating ?? 7, min: 0, max: 10 },
-  { name: 'hue', label: 'Borító színárnyalata (0–359)', type: 'number', value: t.hue ?? Math.floor(Math.random() * 360), min: 0, max: 359 },
+  { name: 'poster', label: 'Borítókép', type: 'image', value: t.poster,
+    hint: 'Ez lesz a film vagy sorozat borítóképe. Álló, 2:3 arányú kép ajánlott (pl. 600×900 px), JPEG, PNG vagy WebP, legfeljebb 8 MB.' },
   { name: 'duration_min', label: 'Hossz (perc)', type: 'number', value: t.duration_min ?? 90, min: 1, max: 1000, showIf: { name: 'type', value: 'movie' } },
   ...videoFields(t, { name: 'type', value: 'movie' }, 'Sorozatnál az epizódoknál adod meg a videókat.'),
   { name: 'featured', label: 'Kiemelt a főoldalon', type: 'checkbox', value: !!t.featured },
@@ -1688,6 +1793,7 @@ function newTitleForm(prefill = {}, recId = null) {
   openForm({
     title: 'Új tartalom', fields: titleFields(prefill), submit: 'Létrehozás', wide: true,
     async onSubmit(v) {
+      if (!v.poster) throw new Error('Tölts fel borítóképet: ez lesz a film vagy sorozat borítóképe.');
       const { id } = await api('/admin/titles', { method: 'POST', body: v });
       if (recId) await api(`/admin/recommendations/${recId}`, { method: 'PATCH', body: { status: 'added' } });
       toast('Tartalom létrehozva.');

@@ -39,6 +39,7 @@ Környezeti változók:
 | `SELLER_NAME`, `SELLER_ADDRESS`, `SELLER_TAX_ID`, `SELLER_EMAIL` | az eladó adatai a számlákon |
 | `SELLER_VAT_RATE` | ÁFA kulcs % (alap: 27; alanyi adómentesség: 0), `SELLER_VAT_NOTE`: megjegyzés a számlán |
 | `INVOICE_PREFIX` | a számla sorszámának előtagja (alap: `IMPIX`) |
+| `SELLER_PHONE`, `SELLER_REG_NUMBER`, `SELLER_REG_LABEL`, `HOSTING_NAME`, `HOSTING_ADDRESS`, `HOSTING_EMAIL` | a jogi oldalak (ÁSZF, Adatkezelési tájékoztató, Impresszum) szolgáltatói adatai; a `SELLER_NAME/ADDRESS/TAX_ID/EMAIL` is ide kerül |
 | `DEMO_PAYMENTS=1` | csak teszteléshez: ingyenes előfizetés Stripe nélkül (élesen tilos) |
 | `MEDIA_SECRET` | feltöltött videólinkek aláírásához (alapból a `data/media.key` fájlba generálódik) |
 | `TRUST_PROXY` | reverse proxy mögött állítsd `1`-re (HTTPS felismerés, kliens IP) |
@@ -96,6 +97,12 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
   (a szerver kényszeríti ki: a magasabb minőségű videólink ki sem megy, és az egyidejű lejátszások számát is számolja)
 - Katalógus (filmek, sorozatok, keresés, műfajszűrés), lejátszó, sorozatoknál automatikus következő epizód
 - A videó csak érvényes előfizetéssel érhető el (a szerver adja ki a címet, a katalógus nem tartalmazza)
+- **Jogi oldalak**: ÁSZF (`/terms`), Adatkezelési tájékoztató (`/privacy`) és Impresszum (`/imprint`), lábléc-hivatkozásokkal. A szövegek a
+  `public/legal.js` fájlban vannak, a szolgáltató adataival a szerver `/api/legal` végpontja (`.env`) tölti ki őket. **Sablonok, nem jogi tanács:**
+  éles használat előtt jogásszal és a könyvelővel át kell nézetni. Regisztrációkor az ÁSZF és az adatkezelés elfogadása, vásárláskor a
+  szolgáltatás azonnali megkezdésére és az elállási jog elvesztésére vonatkozó nyilatkozat kötelező; mindkettő naplózódik (`consents` tábla, a szövegek változatával)
+- **Admin lejárat-észlelés**: ha az admin törli vagy megszünteti egy felhasználó előfizetését, a felhasználó legfeljebb ~8 másodpercen belül
+  a főoldalra kerül, ahol csomagot kell választania
 - **Lejárt előfizetés**: a lejárat pillanatában a felhasználó kikerül a tartalmi oldalakról (lejátszó, katalógus, kedvencek), és a
   Csomagok oldalra kerül; új csomag vásárlásáig csak a Csomagok és a Fiók érhető el. A szerver is megtagadja a kiszolgálást (402),
   tehát ez nem csak megjelenítés. A Stripe-os előfizetésnél a lejáratkor a szerver azonnal rákérdez a Stripe-ra, hátha épp megújult.
@@ -114,7 +121,10 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
 - Előfizetések: szűrés állapot szerint, adás, megújítás (N nappal), szerkesztés (csomag, lejárat), azonnali megszüntetés, törlés
 - Csomagok: létrehozás, szerkesztés, elrejtés/törlés
 - Tartalmak: filmek és sorozatok, epizódok kezelése, kiemelés a főoldalon. Minden tartalomnál kötelező a **leírás**,
-  az **elkészülés éve** és az **ajánlott életkor** (korhatár nélkül / 6 / 12 / 16 / 18)
+  az **elkészülés éve**, az **ajánlott életkor** (korhatár nélkül / 6 / 12 / 16 / 18) és a **borítókép**
+- **Borítókép**: az admin képet tölt fel (JPEG, PNG vagy WebP, legfeljebb 8 MB, álló 2:3 arányú kép ajánlott), ez látszik a katalógusban,
+  a címoldalon és (elmosva) a főoldali kiemelt sávban. A típust a fájl tartalma dönti el, SVG nem engedett. A képek a `data/covers/` mappába kerülnek
+  (nyilvános, kitalálhatatlan nevű fájlok, hosszan gyorsítótárazva); csere vagy törlés esetén a régi fájl törlődik. A kép nélküli (régi) tartalmaknál színes háttér marad
 - Ajánlások: a felhasználók ajánlásai egy helyen (új ajánlás jelvény a menüben), egy kattintással
   „Hozzáadás a katalógushoz" – az űrlap előtöltődik, mentés után az ajánlás automatikusan „felkerült" lesz
 
