@@ -177,6 +177,18 @@ for (const table of ['titles', 'episodes']) {
 
 // Borítókép (feltöltött fájl neve a covers/ mappában; ha nincs, a `hue` színárnyalatból készül háttér)
 addColumn('titles', 'poster', 'TEXT');
+// Honnan származik az értékelés (pl. „IMDb”), ha az AI kereste meg
+addColumn('titles', 'rating_source', 'TEXT');
+// „Ott folytatja, ahol abbahagyta”: tartalmanként egy sor felhasználónként (sorozatnál a legutóbbi epizód), 7 napig érvényes
+db.exec(`CREATE TABLE IF NOT EXISTS watch_progress (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title_id   INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+  episode_id INTEGER,
+  position   REAL NOT NULL DEFAULT 0,
+  duration   REAL NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, title_id)
+)`);
 // Az admin panelen megadott szolgáltatói (cég)adatok: kulcs-érték párok (ÁSZF, impresszum, számlák)
 db.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 // Elfogadott feltételek naplója (ÁSZF és adatkezelési tájékoztató elfogadása regisztrációkor, a digitális szolgáltatás

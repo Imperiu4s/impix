@@ -11,10 +11,12 @@ const env = (k, d = '') => (process.env[k] ?? d).trim();
 
 const ENV_KEYS = {
   name: 'SELLER_NAME', address: 'SELLER_ADDRESS', taxId: 'SELLER_TAX_ID', email: 'SELLER_EMAIL', phone: 'SELLER_PHONE',
-  regNumber: 'SELLER_REG_NUMBER', regLabel: 'SELLER_REG_LABEL',
+  regNumber: 'SELLER_REG_NUMBER', businessType: 'SELLER_BUSINESS_TYPE',
   hostingName: 'HOSTING_NAME', hostingAddress: 'HOSTING_ADDRESS', hostingEmail: 'HOSTING_EMAIL',
-  vatRate: 'SELLER_VAT_RATE', vatNote: 'SELLER_VAT_NOTE',
+  vatRate: 'SELLER_VAT_RATE', vatNote: 'SELLER_VAT_NOTE', invoiceMonths: 'INVOICE_RETENTION_MONTHS',
 };
+export const DEFAULT_BUSINESS_TYPE = 'egyéni vállalkozó';
+export const DEFAULT_INVOICE_MONTHS = 3;
 export const SETTING_KEYS = Object.keys(ENV_KEYS);
 
 function storedSettings() {
@@ -28,8 +30,25 @@ const pick = (stored, key) => (stored[key] ?? '').trim() || env(ENV_KEYS[key]);
 // Minden szolgáltatói adat szövegként (a jogi oldalak és az admin űrlap használja)
 export function legalConfig() {
   const s = storedSettings();
-  return Object.fromEntries(SETTING_KEYS.map((k) => [k, pick(s, k)]));
+  const c = Object.fromEntries(SETTING_KEYS.map((k) => [k, pick(s, k)]));
+  c.businessType = c.businessType || DEFAULT_BUSINESS_TYPE;
+  return c;
 }
+
+// Hány hónapig marad meg egy számla a rendszerben (0 = nem törlődik). Alapértelmezés: 3 hónap.
+export function invoiceRetentionMonths() {
+  const raw = pick(storedSettings(), 'invoiceMonths');
+  const n = raw === '' ? DEFAULT_INVOICE_MONTHS : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 120) : DEFAULT_INVOICE_MONTHS;
+}
+const MONTH_MS = 30 * 86_400_000;
+// A lejárt (a megőrzési időnél régebbi) számlák törlése. Visszaadja a törölt számlák számát.
+export function purgeOldInvoices() {
+  const months = invoiceRetentionMonths();
+  if (!months) return 0;
+  return Number(db.prepare('DELETE FROM invoices WHERE issued_at < ?').run(Date.now() - months * MONTH_MS).changes);
+}
+export const invoiceExpiresAt = (issuedAt) => { const m = invoiceRetentionMonths(); return m ? issuedAt + m * MONTH_MS : null; };
 
 // Mentés az admin panelről: az üres érték törli a mentett adatot (ilyenkor a .env tartaléka él)
 export function saveSettings(values) {
@@ -52,6 +71,7 @@ export function sellerConfig() {
     address: pick(s, 'address'),
     taxId: pick(s, 'taxId'),
     email: pick(s, 'email'),
+    businessType: pick(s, 'businessType') || DEFAULT_BUSINESS_TYPE,
     vatRate,
     vatNote: pick(s, 'vatNote') || (vatRate === 0 ? 'Alanyi adómentes' : ''),
     prefix: env('INVOICE_PREFIX', 'IMPIX').replace(/[^A-Za-z0-9]/g, '').slice(0, 12) || 'IMPIX',
@@ -61,7 +81,7 @@ export function sellerConfig() {
 // A számlázási adatok megvannak-e (az admin panel figyelmeztet, ha nem)
 export const sellerConfigured = () => {
   const s = sellerConfig();
-  return !!(s.name && s.address && s.taxId);
+  return !!(s.name && s.address);
 };
 
 // A bruttó (a vásárló által fizetett) összegből számolt nettó és ÁFA. Forintban, egész számra kerekítve.
@@ -81,7 +101,12 @@ export function issueInvoice({ paymentId, userId, gross, paidAt, planName, perio
     const seller = sellerConfig();
     const issuedAt = Date.now();
     const year = new Date(issuedAt).getFullYear();
-    const seq = db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM invoices WHERE year = ?').get(year).n;
+    // A sorszámláló külön is tárolódik, mert a régi számlák törlődhetnek, és a sorszám akkor sem ismétlődhet
+    const counterKey = `invoiceSeq_${year}`;
+    const counter = Number((db.prepare('SELECT value FROM settings WHERE key = ?').get(counterKey) || {}).value) || 0;
+    const maxRow = db.prepare('SELECT COALESCE(MAX(seq), 0) AS n FROM invoices WHERE year = ?').get(year).n;
+    const seq = Math.max(counter, maxRow) + 1;
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(counterKey, String(seq));
     const number = `${seller.prefix}-${year}-${String(seq).padStart(6, '0')}`;
     const { net, vat } = vatBreakdown(gross, seller.vatRate);
 

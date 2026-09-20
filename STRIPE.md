@@ -109,7 +109,8 @@ sorok mellett). Nem kell e-mailt küldeni.
 - **Eladó:** az admin panel **Cégadatok** fülén megadott adatokból (név, cím, adószám, e-mail, ÁFA kulcs; tartalék: a `.env` `SELLER_*` értékei); kiállításkor a számla **pillanatképként
   tárolja**, ezért utólag sem változik, ha később módosítod az adataidat.
 - **ÁFA:** a bruttó (a vevő által fizetett) árból számolva, alapértelmezetten 27%. Alanyi adómentesség esetén a Cégadatok fülön 0 (vagy `SELLER_VAT_RATE=0`).
-- **Megőrzés:** a számlák a felhasználó törlése után is megmaradnak az adatbázisban (a számlákat jogszabály szerint meg kell őrizni).
+- **Megőrzés:** a számlák a Cégadatok fülön beállított ideig (alapból **3 hónap**) maradnak meg a rendszerben, utána automatikusan törlődnek (0 = soha). A törölt számlák sorszáma nem ismétlődik.
+  **Figyelem:** a számviteli szabályok ennél hosszabb megőrzést írhatnak elő, ezért a számlákat időben mentsd le az admin panel Számlák füléről, és egyeztess a könyvelőddel.
 - **Admin:** az admin panel **Számlák** fülén minden számla látható és letölthető (könyveléshez), kereshető sorszám vagy vevő szerint.
 - **Ingyenes tételek** (admin által adott előfizetés) után nem készül számla.
 - Ha a cégadatok hiányoznak, az admin panelen figyelmeztetés jelenik meg, a számlán pedig „Az eladó adatai nincsenek megadva”.

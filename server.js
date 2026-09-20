@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 import db, { tx, seed } from './db.js';
 import { hashPassword, verifyPassword, verifyDummy, hashToken, newToken } from './security.js';
 import * as billing from './billing.js';
-import { issueInvoice, sellerConfigured, sellerConfig, legalConfig, saveSettings } from './invoices.js';
+import { issueInvoice, sellerConfigured, sellerConfig, legalConfig, saveSettings, purgeOldInvoices, invoiceExpiresAt, invoiceRetentionMonths } from './invoices.js';
+import { fetchGlobalRating, RatingError, aiStatus, saveApiKey } from './ratings.js';
 import { renderInvoicePdf } from './invoice-pdf.js';
 
 // Pterodactyl panelen a kiosztott portot a SERVER_PORT változó adja
@@ -30,6 +31,7 @@ const COVER_RE = /^[a-f0-9]{32}\.(jpg|png|webp)$/;
 const MAX_COVER = 8 * 1024 * 1024;
 // A jogi szövegek (ÁSZF, adatkezelési tájékoztató) változata; a hozzájárulásokkal együtt naplózzuk
 const LEGAL_VERSION = '2026-09-20';
+const PROGRESS_TTL = 7 * 24 * 3600_000; // a „folytatás” 7 napig érvényes, utána előlről indul
 fs.mkdirSync(VIDEO_DIR, { recursive: true });
 fs.mkdirSync(COVER_DIR, { recursive: true });
 
@@ -461,7 +463,7 @@ app.get('/api/legal', (req, res) => {
   res.json({
     version: LEGAL_VERSION,
     name: c.name, address: c.address, taxId: c.taxId, email: c.email,
-    phone: c.phone, regNumber: c.regNumber, regLabel: c.regLabel,
+    phone: c.phone, regNumber: c.regNumber, businessType: c.businessType, invoiceMonths: invoiceRetentionMonths(),
     hostingName: c.hostingName, hostingAddress: c.hostingAddress, hostingEmail: c.hostingEmail,
     siteUrl: (process.env.SITE_URL || '').trim() || 'https://impix.hu',
   });
@@ -542,17 +544,20 @@ app.patch('/api/me/prefs', requireAuth, (req, res) => {
 });
 
 app.get('/api/me/payments', requireAuth, (req, res) => {
-  res.json(db.prepare(`
-    SELECT p.id, p.plan_name, p.amount, p.kind, p.created_at, i.id AS invoice_id, i.number AS invoice_number
+  const rows = db.prepare(`
+    SELECT p.id, p.plan_name, p.amount, p.kind, p.created_at, i.id AS invoice_id, i.number AS invoice_number, i.issued_at AS invoice_issued_at
     FROM payments p LEFT JOIN invoices i ON i.payment_id = p.id
-    WHERE p.user_id = ? ORDER BY p.created_at DESC, p.id DESC LIMIT 50`).all(req.user.id));
+    WHERE p.user_id = ? ORDER BY p.created_at DESC, p.id DESC LIMIT 50`).all(req.user.id);
+  // Meddig tölthető le a számla (utána automatikusan törlődik)
+  res.json(rows.map((r) => ({ ...r, invoice_expires_at: r.invoice_issued_at ? invoiceExpiresAt(r.invoice_issued_at) : null })));
 });
 
 // ---------- Számlák ----------
 
 app.get('/api/invoices', requireAuth, (req, res) => {
   res.json(db.prepare(`SELECT id, number, issued_at, paid_at, description, period_start, period_end, gross
-    FROM invoices WHERE user_id = ? ORDER BY issued_at DESC, id DESC`).all(req.user.id));
+    FROM invoices WHERE user_id = ? ORDER BY issued_at DESC, id DESC`).all(req.user.id)
+    .map((r) => ({ ...r, expires_at: invoiceExpiresAt(r.issued_at) })));
 });
 
 // A számla PDF-je: csak a tulajdonosa (és az admin) töltheti le. A PDF a kiállításkor mentett adatokból készül, ezért nem változik.
@@ -667,7 +672,7 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
 
 // ---------- Tartalom ----------
 
-const TITLE_PUBLIC = `t.id, t.type, t.title, t.description, t.year, t.genre, t.age, t.rating,
+const TITLE_PUBLIC = `t.id, t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.rating_source,
   t.duration_min, t.hue, t.poster, t.featured,
   (SELECT COUNT(*) FROM episodes e WHERE e.title_id = t.id) AS episode_count,
   (SELECT COUNT(DISTINCT season) FROM episodes e WHERE e.title_id = t.id) AS season_count,
@@ -699,11 +704,62 @@ app.get('/api/titles', requireAccess, (req, res) => {
   res.json(db.prepare(`SELECT ${TITLE_PUBLIC} FROM titles t ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY t.created_at DESC, t.id DESC`).all(...args));
 });
 
+// ---- „Ott folytatja, ahol abbahagyta” ----
+// Felhasználónként és tartalmanként egy sor (sorozatnál a legutóbbi epizód), 7 napig érvényes; utána a nézés előlről indul.
+function progressFor(uid, titleId) {
+  const row = db.prepare(`SELECT wp.episode_id, wp.position, wp.duration, wp.updated_at, e.season, e.number, e.name AS episode_name
+    FROM watch_progress wp LEFT JOIN episodes e ON e.id = wp.episode_id
+    WHERE wp.user_id = ? AND wp.title_id = ? AND wp.updated_at > ?`).get(uid, titleId, Date.now() - PROGRESS_TTL);
+  if (!row) return null;
+  const isSeries = db.prepare('SELECT type FROM titles WHERE id = ?').get(titleId)?.type === 'series';
+  if (isSeries && !row.season) return null; // az epizód időközben törlődött
+  return { episode_id: row.episode_id, season: row.season ?? null, number: row.number ?? null, episode_name: row.episode_name ?? null,
+    position: Math.floor(row.position), duration: Math.floor(row.duration), updated_at: row.updated_at };
+}
+
 app.get('/api/titles/:id', requireAccess, (req, res) => {
   const title = db.prepare(`SELECT ${TITLE_PUBLIC} FROM titles t WHERE t.id = ?`).get(req.user.id, Number(req.params.id));
   if (!title) fail('A tartalom nem található.', 404);
   const episodes = db.prepare('SELECT id, season, number, name FROM episodes WHERE title_id = ? ORDER BY season, number').all(title.id);
-  res.json({ ...title, episodes });
+  res.json({ ...title, episodes, progress: progressFor(req.user.id, title.id) });
+});
+
+app.get('/api/progress/:titleId', requireAccess, (req, res) => res.json(progressFor(req.user.id, Number(req.params.titleId))));
+
+// „Nézd tovább” lista: a legutóbb megkezdett tartalmak
+app.get('/api/continue', requireAccess, (req, res) => {
+  res.json(db.prepare(`SELECT ${TITLE_PUBLIC}, wp.episode_id AS resume_episode, wp.position AS resume_position, wp.duration AS resume_duration,
+      e.season AS resume_season, e.number AS resume_number
+    FROM watch_progress wp JOIN titles t ON t.id = wp.title_id LEFT JOIN episodes e ON e.id = wp.episode_id
+    WHERE wp.user_id = ? AND wp.updated_at > ? AND (t.type = 'series' AND e.id IS NOT NULL OR t.type = 'movie' AND wp.position >= 15)
+    ORDER BY wp.updated_at DESC LIMIT 20`).all(req.user.id, req.user.id, Date.now() - PROGRESS_TTL));
+});
+
+app.put('/api/progress', requireAccess, (req, res) => {
+  const b = req.body || {};
+  const titleId = Number(b.titleId);
+  const title = db.prepare('SELECT id, type FROM titles WHERE id = ?').get(titleId);
+  if (!title) fail('A tartalom nem található.', 404);
+  const position = Number(b.position);
+  const duration = Number(b.duration) || 0;
+  if (!Number.isFinite(position) || position < 0 || position > 1e6 || !Number.isFinite(duration) || duration < 0 || duration > 1e6) fail('Érvénytelen adat.');
+  let episodeId = null;
+  if (title.type === 'series') {
+    episodeId = Number(b.episodeId);
+    if (!db.prepare('SELECT 1 FROM episodes WHERE id = ? AND title_id = ?').get(episodeId, title.id)) fail('Az epizód nem található.', 404);
+  }
+  const upsert = (ep, pos, dur) => db.prepare(`INSERT INTO watch_progress (user_id, title_id, episode_id, position, duration, updated_at) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(user_id, title_id) DO UPDATE SET episode_id = excluded.episode_id, position = excluded.position, duration = excluded.duration, updated_at = excluded.updated_at`)
+    .run(req.user.id, title.id, ep, pos, dur, Date.now());
+
+  const finished = duration > 0 && (position >= duration - 45 || position / duration >= 0.95);
+  if (!finished) { upsert(episodeId, position, duration); return res.json({ ok: true }); }
+  // Végignézte: sorozatnál a következő epizód lesz a folytatás, filmnél (vagy az utolsó epizódnál) törlődik, így újra előlről indul
+  const eps = title.type === 'series' ? db.prepare('SELECT id FROM episodes WHERE title_id = ? ORDER BY season, number').all(title.id) : [];
+  const next = eps[eps.findIndex((e) => e.id === episodeId) + 1];
+  if (title.type === 'series' && next) upsert(next.id, 0, 0);
+  else db.prepare('DELETE FROM watch_progress WHERE user_id = ? AND title_id = ?').run(req.user.id, title.id);
+  res.json({ ok: true, finished: true });
 });
 
 // A videó csak érvényes előfizetéssel kérhető le, és pontosan azt kapja, amit a csomagja ad:
@@ -735,7 +791,7 @@ app.get('/api/watch/:id', requireAuth, async (req, res) => {
   claimStream(req.user.id, stream, ent.screens);
 
   res.json({
-    title: title.title, type: title.type, url: signedMedia(source.url, req.user.id), kind: videoKind(source.url),
+    title: title.title, type: title.type, poster: title.poster, hue: title.hue, url: signedMedia(source.url, req.user.id), kind: videoKind(source.url),
     quality: source.quality, qualityLabel: QUALITY_LABEL[source.quality],
     higherQuality: source.higher, higherLabel: source.higher ? QUALITY_LABEL[source.higher] : null,
     plan: ent.planName, screens: Number.isFinite(ent.screens) ? ent.screens : null,
@@ -1065,9 +1121,10 @@ admin.delete('/plans/:id', (req, res) => {
 
 // Szolgáltatói (cég)adatok: az ÁSZF, az adatkezelési tájékoztató, az impresszum és a számlák ezekből töltődnek ki.
 // Az űrlap a jelenleg érvényes értékeket mutatja (mentett adat, ennek hiányában a .env).
-const LEGAL_REQUIRED = [['name', 'a szolgáltató neve'], ['address', 'székhely'], ['taxId', 'adószám'], ['email', 'e-mail cím'], ['phone', 'telefonszám'],
-  ['regNumber', 'nyilvántartási szám'], ['hostingName', 'tárhelyszolgáltató neve'], ['hostingAddress', 'tárhelyszolgáltató címe'], ['hostingEmail', 'tárhelyszolgáltató e-mail címe']];
-admin.get('/settings', (req, res) => res.json(legalConfig()));
+// Csak ezek hiánya jelez figyelmeztetést; az adószám, a telefonszám, a nyilvántartási szám és a tárhelyszolgáltató adatai nem kötelezők
+// (ha üresek, a jogi szövegekből a megfelelő sor egyszerűen kimarad)
+const LEGAL_REQUIRED = [['name', 'a szolgáltató neve'], ['address', 'székhely'], ['email', 'e-mail cím']];
+admin.get('/settings', (req, res) => res.json({ ...legalConfig(), invoiceMonths: String(invoiceRetentionMonths()) }));
 admin.put('/settings', (req, res) => {
   const b = req.body || {};
   const text = (k, name, max) => {
@@ -1080,16 +1137,27 @@ admin.put('/settings', (req, res) => {
     if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) fail(`${name}: érvénytelen e-mail cím.`);
     return v;
   };
-  const rate = b.vatRate === undefined || b.vatRate === null || b.vatRate === '' ? '' : String(int(b.vatRate, 'ÁFA kulcs', 0, 27));
+  const optInt = (k, name, min, max) => (b[k] === undefined || b[k] === null || b[k] === '' ? '' : String(int(b[k], name, min, max)));
   saveSettings({
-    name: text('name', 'A szolgáltató neve', 120), address: text('address', 'Székhely', 200), taxId: text('taxId', 'Adószám', 40),
-    email: mail('email', 'E-mail cím'), phone: text('phone', 'Telefonszám', 40),
-    regNumber: text('regNumber', 'Nyilvántartási szám', 60), regLabel: text('regLabel', 'Nyilvántartási szám megnevezése', 60),
+    name: text('name', 'A szolgáltató neve', 120), businessType: text('businessType', 'Vállalkozási forma', 60),
+    address: text('address', 'Székhely', 200), taxId: text('taxId', 'Adószám', 40),
+    email: mail('email', 'E-mail cím'), phone: text('phone', 'Telefonszám', 40), regNumber: text('regNumber', 'Nyilvántartási szám', 60),
     hostingName: text('hostingName', 'Tárhelyszolgáltató neve', 120), hostingAddress: text('hostingAddress', 'Tárhelyszolgáltató címe', 200),
     hostingEmail: mail('hostingEmail', 'Tárhelyszolgáltató e-mail címe'),
-    vatRate: rate, vatNote: text('vatNote', 'ÁFA megjegyzés', 200),
+    vatRate: optInt('vatRate', 'ÁFA kulcs', 0, 27), vatNote: text('vatNote', 'ÁFA megjegyzés', 200),
+    invoiceMonths: optInt('invoiceMonths', 'Számlák megőrzési ideje (hónap)', 0, 120),
   });
-  res.json(legalConfig());
+  purgeOldInvoices(); // az új megőrzési idő azonnal érvényesül
+  res.json({ ...legalConfig(), invoiceMonths: String(invoiceRetentionMonths()) });
+});
+
+// Automatikus értékelés (AI): az Anthropic API kulcs. A kulcsot sosem adjuk vissza, csak azt, hogy be van-e állítva.
+admin.get('/ai', (req, res) => res.json(aiStatus()));
+admin.put('/ai', (req, res) => {
+  const k = typeof req.body.apiKey === 'string' ? req.body.apiKey.trim() : '';
+  if (k && (k.length < 20 || k.length > 300 || /\s/.test(k))) fail('Érvénytelen API kulcs formátum.');
+  saveApiKey(k);
+  res.json(aiStatus());
 });
 
 // Videófeltöltés: nyers fájltörzs (PUT), streamelve a lemezre. Nincs memóriában pufferelés.
@@ -1186,7 +1254,8 @@ function titleInput(b) {
     year: int(b.year, 'Elkészülés éve', 1888, new Date().getFullYear() + 2),
     genre: str(b.genre, 'Műfaj', { max: 40 }),
     age,
-    rating: num(b.rating, 'Értékelés', 0, 10),
+    // Üresen hagyva az AI keresi meg a globális értékelést (létrehozáskor), vagy a régi érték marad (szerkesztéskor)
+    rating: b.rating === undefined || b.rating === null || b.rating === '' ? null : num(b.rating, 'Értékelés', 0, 10),
     duration_min: type === 'movie' ? int(b.duration_min, 'Hossz (perc)', 1, 1000) : null,
     // Tartalék háttérszín arra az esetre, ha a borítókép nem tölt be; az űrlapon nem kell megadni
     hue: b.hue === undefined || b.hue === '' || b.hue === null ? null : int(b.hue, 'Színárnyalat', 0, 359),
@@ -1198,13 +1267,38 @@ function titleInput(b) {
 }
 const sourceList = (row) => (row ? [row.video_url, row.video_url_1080, row.video_url_2160] : []);
 
-admin.post('/titles', (req, res) => {
+// Az AI megkeresi a film globális értékelését. Hiba esetén nem dobunk, hanem az üzenetet adjuk vissza (a tartalom így is létrejön).
+async function lookupRating(t) {
+  try {
+    const r = await fetchGlobalRating({ title: t.title, year: t.year, type: t.type });
+    return { rating: r.rating, source: r.source, error: null };
+  } catch (err) {
+    if (!(err instanceof RatingError)) console.error('Értékelés-keresési hiba:', err);
+    return { rating: null, source: null, error: err instanceof RatingError ? err.message : 'Az automatikus értékelés váratlan hibával leállt.' };
+  }
+}
+
+admin.post('/titles', async (req, res) => {
   const t = titleInput(req.body);
   if (!t.poster) fail('A borítókép kötelező: tölts fel egy képet (JPEG, PNG vagy WebP).');
   const hue = t.hue ?? Math.floor(Math.random() * 360);
-  const id = Number(db.prepare(`INSERT INTO titles (type,title,description,year,genre,age,rating,duration_min,hue,poster,video_url,video_url_1080,video_url_2160,featured,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, hue, t.poster, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, Date.now()).lastInsertRowid);
-  res.status(201).json({ id });
+  let rating = t.rating, source = null, ratingError = null;
+  if (rating === null) { // nincs kézi érték: az AI keresi meg
+    const r = await lookupRating(t);
+    rating = r.rating ?? 0; source = r.source; ratingError = r.error; // 0 = nincs értékelés (a felületen nem jelenik meg)
+  }
+  const id = Number(db.prepare(`INSERT INTO titles (type,title,description,year,genre,age,rating,rating_source,duration_min,hue,poster,video_url,video_url_1080,video_url_2160,featured,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(t.type, t.title, t.description, t.year, t.genre, t.age, rating, source, t.duration_min, hue, t.poster, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, Date.now()).lastInsertRowid);
+  res.status(201).json({ id, rating, ratingSource: source, ratingError });
+});
+// Az értékelés (újra)keresése az AI-jal egy már meglévő tartalomhoz
+admin.post('/titles/:id/rating', async (req, res) => {
+  const t = db.prepare('SELECT id, type, title, year FROM titles WHERE id = ?').get(Number(req.params.id));
+  if (!t) fail('A tartalom nem található.', 404);
+  const r = await lookupRating(t);
+  if (r.error) fail(r.error, 422);
+  db.prepare('UPDATE titles SET rating = ?, rating_source = ? WHERE id = ?').run(r.rating, r.source, t.id);
+  res.json({ rating: r.rating, ratingSource: r.source });
 });
 admin.patch('/titles/:id', (req, res) => {
   const t = titleInput(req.body);
@@ -1212,8 +1306,9 @@ admin.patch('/titles/:id', (req, res) => {
   const old = db.prepare('SELECT video_url, video_url_1080, video_url_2160, poster FROM titles WHERE id = ?').get(id);
   if (!old) fail('A tartalom nem található.', 404);
   // Borítókép nélkül a meglévő marad; a szín is csak akkor változik, ha megadták
-  db.prepare(`UPDATE titles SET type=?,title=?,description=?,year=?,genre=?,age=?,rating=?,duration_min=?,hue=COALESCE(?,hue),poster=COALESCE(?,poster),video_url=?,video_url_1080=?,video_url_2160=?,featured=? WHERE id=?`)
-    .run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, t.hue, t.poster, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, id);
+  // Kézzel megadott értékelésnél a forrás törlődik; üresen hagyva a meglévő értékelés (és forrása) marad
+  db.prepare(`UPDATE titles SET type=?,title=?,description=?,year=?,genre=?,age=?,rating=COALESCE(?,rating),rating_source=CASE WHEN ? IS NULL THEN rating_source ELSE NULL END,duration_min=?,hue=COALESCE(?,hue),poster=COALESCE(?,poster),video_url=?,video_url_1080=?,video_url_2160=?,featured=? WHERE id=?`)
+    .run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.rating, t.duration_min, t.hue, t.poster, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, id);
   sourceList(old).forEach(releaseMedia); // amire már semmi nem hivatkozik, az törlődik
   releaseCover(old.poster);
   res.json({ ok: true });
@@ -1290,6 +1385,16 @@ sweepMedia();
 setInterval(sweepMedia, 3600_000).unref();
 sweepCovers();
 setInterval(sweepCovers, 3600_000).unref();
+// Lejárt számlák és lejárt „folytatás” adatok takarítása (a megőrzési idő az admin panelen állítható, alapból 3 hónap / 7 nap)
+function sweepExpiredData() {
+  try {
+    const n = purgeOldInvoices();
+    if (n) console.log(`${n} lejárt számla törölve.`);
+    db.prepare('DELETE FROM watch_progress WHERE updated_at < ?').run(Date.now() - PROGRESS_TTL);
+  } catch (err) { console.error('Takarítási hiba:', err.message); }
+}
+sweepExpiredData();
+setInterval(sweepExpiredData, 3600_000).unref();
 
 // ---------- HTTP / HTTPS indítás ----------
 // Ha van tanúsítvány (tls/fullchain.pem + tls/privkey.pem, vagy TLS_CERT / TLS_KEY), a szerver maga szolgál ki HTTPS-t.

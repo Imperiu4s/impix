@@ -50,7 +50,7 @@ export function renderInvoicePdf(inv) {
       return y;
     };
     const sellerLines = seller.name || seller.address || seller.taxId
-      ? [[seller.name, true], [seller.address], [seller.taxId && `Adószám: ${seller.taxId}`], [seller.email]]
+      ? [[seller.name, true], [seller.businessType], [seller.address], [seller.taxId && `Adószám: ${seller.taxId}`], [seller.email]]
       : [['Az eladó adatai nincsenek megadva', false]];
     const y1 = party(L, 'ELADÓ', sellerLines);
     const y2 = party(L + 265, 'VEVŐ', [[inv.buyer_name, true], [inv.buyer_address], [inv.buyer_email]]);

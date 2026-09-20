@@ -38,6 +38,7 @@ Környezeti változók:
 | `SITE_URL` | a weboldal címe (ide tér vissza a felhasználó a fizetés után), pl. `https://impix.hu` |
 | `SELLER_NAME`, `SELLER_ADDRESS`, `SELLER_TAX_ID`, `SELLER_EMAIL` | **nem kötelező**: a szolgáltató adatait az admin panel "Cégadatok" fülén kell megadni; ezek csak tartalékként szolgálnak |
 | `SELLER_VAT_RATE` | ÁFA kulcs % (alap: 27; alanyi adómentesség: 0), `SELLER_VAT_NOTE`: megjegyzés a számlán |
+| `ANTHROPIC_API_KEY`, `INVOICE_RETENTION_MONTHS`, `SELLER_BUSINESS_TYPE` | tartalék az admin panel Cégadatok füle mellett: AI-kulcs, számlák megőrzése (hónap, alap 3), vállalkozási forma |
 | `INVOICE_PREFIX` | a számla sorszámának előtagja (alap: `IMPIX`) |
 | `SELLER_PHONE`, `SELLER_REG_NUMBER`, `SELLER_REG_LABEL`, `HOSTING_NAME`, `HOSTING_ADDRESS`, `HOSTING_EMAIL` | ugyanez (tartalék): a jogi oldalak és számlák szolgáltatói adatai |
 | `DEMO_PAYMENTS=1` | csak teszteléshez: ingyenes előfizetés Stripe nélkül (élesen tilos) |
@@ -89,7 +90,7 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
 - Regisztráció, belépés, kilépés, profil- és jelszómódosítás
 - Előfizetés **bankkártyával (Stripe)**, havi automatikus megújulással, lemondás, számlázási portál. Aktív előfizetés mellett
   csomagot váltani nem lehet, előbb le kell mondani ([STRIPE.md](STRIPE.md))
-- **Számla letöltése**: minden kifizetett előfizetési díjról sorszámozott számla-PDF készül, amit a felhasználó a Fiók oldalon tölthet le
+- **Számla letöltése** (a számlák alapból 3 hónap után automatikusan törlődnek, ez a Cégadatok fülön állítható): minden kifizetett előfizetési díjról sorszámozott számla-PDF készül, amit a felhasználó a Fiók oldalon tölthet le
   (nem kell e-mail). Az admin panel „Számlák” fülén könyveléshez minden számla látható. Az eladó adatait az admin panel "Cégadatok" füle adja;
   a jogi megfelelésről lásd a [STRIPE.md](STRIPE.md) „Számlák” részét.
 - **Tiszta címek**: `impix.hu`, `impix.hu/plans` (nem `impix.hu/#/plans`); a régi `#/` címek is működnek
@@ -108,6 +109,11 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
   tehát ez nem csak megjelenítés. A Stripe-os előfizetésnél a lejáratkor a szerver azonnal rákérdez a Stripe-ra, hátha épp megújult.
 - **Automatikus megújulás figyelmeztetés**: aktív, kártyás előfizetésnél a Fiók oldalon kiemelt tájékoztatás jelzi, hogy az előfizetés
   a lejáratkor megújul és levonják a díjat, ha nem mondja le
+- **Ott folytatja, ahol abbahagyta**: a lejátszó 10 mp-enként, szüneteltetéskor és kilépéskor menti a helyet; 7 napig érvényes, utána előlről indul.
+  Fájl (feltöltött vagy közvetlen) videónál a pontos pillanat mentődik („Folytatás” a címoldalon, „Nézd tovább” sáv a főoldalon, „Előlről” gomb).
+  Sorozatnál a következő epizód lesz a folytatás. **Beágyazott lejátszónál (pl. Videa) a lejátszó belsejébe nem látunk bele, ezért ott csak a sorozat epizódja jegyződik meg, a pillanat nem.**
+- **Lejátszó**: minden videó saját, egységes keretben fut (betöltő animáció, előző/következő rész gombok); a beágyazott videó forrásának neve sehol nem jelenik meg az oldalon.
+  A beágyazott lejátszó saját belső felületét (pl. a szolgáltató logóját) nem lehet átalakítani, az a külső szolgáltatóé.
 - **Lapozható sávok**: a főoldali sávok nyilakkal, elhalványuló szélekkel, haladásjelzővel lapozhatók és egérrel húzhatók (nincs görgetősáv)
 - **Animációk**: oldalváltás, beperegő borítók, szívverés a kedvencnél, csillanó borítók, lebegő hero; a `prefers-reduced-motion` beállítást tiszteletben tartja
 - Téma: sötét / világos / automatikus + 5 kiemelő szín; a fiókhoz mentődik
@@ -122,6 +128,8 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
 - Csomagok: létrehozás, szerkesztés, elrejtés/törlés
 - Tartalmak: filmek és sorozatok, epizódok kezelése, kiemelés a főoldalon. Minden tartalomnál kötelező a **leírás**,
   az **elkészülés éve**, az **ajánlott életkor** (korhatár nélkül / 6 / 12 / 16 / 18) és a **borítókép**
+- **Automatikus értékelés (AI)**: új tartalomnál, ha az értékelés üres, a Claude (webes kereséssel) megkeresi a globális értékelést (elsősorban IMDb), és azt menti forrással együtt.
+  Az Anthropic API kulcsot az admin panel **Cégadatok** fülén kell megadni (`ANTHROPIC_API_KEY` tartalék). Meglévő tartalomnál az „AI értékelés” gombbal frissíthető. Használata az Anthropic felé díjköteles.
 - **Borítókép**: az admin képet tölt fel (JPEG, PNG vagy WebP, legfeljebb 8 MB, álló 2:3 arányú kép ajánlott), ez látszik a katalógusban,
   a címoldalon és (elmosva) a főoldali kiemelt sávban. A típust a fájl tartalma dönti el, SVG nem engedett. A képek a `data/covers/` mappába kerülnek
   (nyilvános, kitalálhatatlan nevű fájlok, hosszan gyorsítótárazva); csere vagy törlés esetén a régi fájl törlődik. A kép nélküli (régi) tartalmaknál színes háttér marad

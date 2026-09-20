@@ -190,7 +190,21 @@ const ageLabel = (a) => (a === 0 ? 'Korhatár nélkül' : `${a}+`);
 // ---------- Lapozható sáv (görgetősáv helyett) ----------
 // Nyilak, a szélén elhalványuló tartalom, haladásjelző vonal, egérrel húzható; érintőképernyőn ujjal lapozható.
 
-const rail = (name, list) => list.length ? html`
+// „Nézd tovább” csempe: a borítón haladásjelző, a hivatkozás közvetlenül a mentett részre visz
+const continueTile = (t, i = 0) => {
+  const pct = t.resume_duration > 0 ? Math.min(100, Math.round((t.resume_position / t.resume_duration) * 100)) : 0;
+  const href = `/watch/${t.id}${t.resume_episode ? `/${t.resume_episode}` : ''}`;
+  const where = [t.type === 'series' && t.resume_season ? `${t.resume_season}×${t.resume_number}` : '', t.resume_position >= 15 ? fmtTime(t.resume_position) : ''].filter(Boolean).join(' · ');
+  return html`
+    <div class="tile-wrap" style="--i:${Math.min(Number(i) || 0, 14)}">
+      <a class="tile" href="${href}" aria-label="${t.title} folytatása" draggable="false">
+        <div class="poster-holder">${poster(t)}${pct > 0 && html`<div class="resume-bar"><i style="width:${pct}%"></i></div>`}<span class="resume-play" aria-hidden="true">▶</span></div>
+        <div class="tile-meta">${where || 'Folytatás'}</div>
+      </a>
+    </div>`;
+};
+
+const rail = (name, list, tileFn = tile) => list.length ? html`
   <section class="rail" data-rail>
     <div class="rail-head">
       <h2>${name}</h2>
@@ -199,7 +213,7 @@ const rail = (name, list) => list.length ? html`
     </div>
     <div class="rail-viewport">
       <button class="rail-arrow prev" data-action="railPrev" aria-label="Előző">‹</button>
-      <div class="rail-track">${list.map(tile)}</div>
+      <div class="rail-track">${list.map(tileFn)}</div>
       <button class="rail-arrow next" data-action="railNext" aria-label="Következő">›</button>
     </div>
   </section>` : '';
@@ -263,7 +277,7 @@ function pageRail(el, dir) {
 
 const titleMeta = (t) => html`
   <div class="meta">
-    <span>★ ${Number(t.rating).toFixed(1)}</span>
+    ${t.rating > 0 && html`<span title="${t.rating_source ? `Globális értékelés (${t.rating_source})` : 'Értékelés'}">★ ${Number(t.rating).toFixed(1)}</span>`}
     <span>${t.year}</span>
     <span class="age" title="Ajánlott életkor">${ageLabel(t.age)}</span>
     <span>${t.genre}</span>
@@ -780,20 +794,28 @@ forms.register = async ({ name, email, password, password2, acceptTerms }) => {
 // ==========================================================
 
 let legalInfo = null;
-const LEGAL_FIELD_NAMES = {
-  name: 'a szolgáltató neve', address: 'székhely', taxId: 'adószám', regNumber: 'nyilvántartási szám', email: 'e-mail cím', phone: 'telefonszám',
-  hostingName: 'tárhelyszolgáltató neve', hostingAddress: 'tárhelyszolgáltató címe', hostingEmail: 'tárhelyszolgáltató e-mail címe',
-};
-const LEGAL_LABEL_DEFAULT = 'cégjegyzékszám vagy egyéni vállalkozói nyilvántartási szám';
+// Az adószám, telefonszám, nyilvántartási szám és tárhelyszolgáltató adatai nem kötelezők: ha üresek, az őket tartalmazó sor kimarad.
+// A szolgáltató adataiból összeállított, a szövegekben használt összetett értékek:
+function legalValues(info) {
+  const months = Number(info.invoiceMonths);
+  const host = [info.hostingName, info.hostingAddress, info.hostingEmail && `e-mail: ${info.hostingEmail}`].filter(Boolean).join(', ');
+  return {
+    ...info,
+    nameFull: [info.name, info.businessType && (info.name ? `(${info.businessType})` : info.businessType)].filter(Boolean).join(' '),
+    hostingFull: host,
+    hostingGeneric: host || 'a szerver tárhelyszolgáltatója',
+    invoiceKeep: months > 0 ? `a kiállítástól számított ${months} hónapig` : 'korlátlan ideig',
+    invoiceDelete: months > 0 ? ', ezt követően automatikusan törlődik' : '',
+  };
+}
 
-// Szöveg -> biztonságos HTML: minden escape-elt, a {{helyőrzők}} a szolgáltató adataival töltődnek ki, **félkövér** és `kód`
-function legalText(str, info) {
+// Szöveg -> biztonságos HTML: minden escape-elt, a {{helyőrzők}} kitöltődnek, **félkövér** és `kód`.
+// Ha egy sorban minden helyőrző üres, a sor kimarad (null).
+function legalText(str, vals) {
+  const keys = [...str.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]).filter((k) => k !== 'invoiceDelete');
+  if (keys.length && keys.every((k) => !vals[k])) return null;
   return esc(str)
-    .replace(/\{\{(\w+)\}\}/g, (_, k) => {
-      if (k === 'regLabel') return esc(info.regLabel || LEGAL_LABEL_DEFAULT);
-      const v = info[k];
-      return v ? esc(v) : `<span class="legal-missing">[hiányzó adat: ${esc(LEGAL_FIELD_NAMES[k] || k)}]</span>`;
-    })
+    .replace(/\{\{(\w+)\}\}/g, (_, k) => esc(vals[k] ?? ''))
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/`(.+?)`/g, '<code>$1</code>');
 }
@@ -801,24 +823,27 @@ function legalText(str, info) {
 async function legalPage({ doc }) {
   if (!legalInfo) { try { legalInfo = await api('/legal'); } catch { legalInfo = {}; } }
   const info = legalInfo;
+  const vals = legalValues(info);
   const d = window.IMPIX_LEGAL[doc];
-  const t = (s) => raw(legalText(s, info));
+  const t = (s) => { const h = legalText(s, vals); return h === null ? '' : raw(h); };
   const others = [['terms', 'Általános Szerződési Feltételek'], ['privacy', 'Adatkezelési tájékoztató'], ['imprint', 'Impresszum']].filter(([k]) => k !== doc);
-  const incomplete = state.user && state.user.role === 'admin' && !(info.name && info.address && info.taxId && info.email);
+  const incomplete = state.user && state.user.role === 'admin' && !(info.name && info.address && info.email);
   return page(html`
     <div class="page legal">
       <h1 class="page-title">${d.title}</h1>
       <p class="legal-lead">${d.lead}</p>
       <p class="muted legal-meta">Hatályos: ${info.version || ''}</p>
       ${incomplete && html`<div class="banner"><div><strong>Admin figyelmeztetés: a szolgáltató adatai még nincsenek megadva.</strong>
-        <div class="muted">A hiányzó részeket „[hiányzó adat]” jelzi. Töltsd ki az Admin panel „Cégadatok” fülén, a szöveg azonnal frissül.</div></div>
+        <div class="muted">Add meg legalább a nevet, a székhelyet és az e-mail címet az Admin panel „Cégadatok” fülén, a szöveg azonnal frissül.</div></div>
         <a class="btn primary" href="/admin/settings">Cégadatok</a></div>`}
       ${d.sections.length > 6 && html`<nav class="legal-toc card" aria-label="Tartalomjegyzék"><strong>Tartalom</strong>
         <ol>${d.sections.map((s, i) => html`<li><button type="button" class="link-btn" data-action="legalJump" data-id="legal-${i}">${s.h.replace(/^\d+\.\s*/, '')}</button></li>`)}</ol></nav>`}
       ${d.sections.map((s, i) => html`
         <section class="legal-sec" id="legal-${i}">
           <h2>${s.h}</h2>
-          ${s.body.map((b) => Array.isArray(b) ? html`<ul>${b.map((li) => html`<li>${t(li)}</li>`)}</ul>` : html`<p>${t(b)}</p>`)}
+          ${s.body.map((b) => Array.isArray(b)
+            ? html`<ul>${b.filter((li) => legalText(li, vals) !== null).map((li) => html`<li>${t(li)}</li>`)}</ul>`
+            : html`<p>${t(b)}</p>`)}
         </section>`)}
       <div class="legal-links row">${others.map(([k, l]) => html`<a class="btn" href="/${k}">${l}</a>`)}</div>
     </div>`);
@@ -833,7 +858,7 @@ async function homePage() {
   if (!state.user) return landingPage();
   if (!hasAccess()) return plansPage(); // előfizetés nélkül (vagy lejárat után) a főoldal a csomagválasztó
 
-  const titles = await api('/titles');
+  const [titles, cont] = await Promise.all([api('/titles'), api('/continue').catch(() => [])]);
   if (!titles.length) return page(html`<div class="page">${emptyBox('Még nincs feltöltött tartalom.')}</div>`);
 
   const hero = titles.find((t) => t.featured) || titles[0];
@@ -857,6 +882,7 @@ async function homePage() {
       </div>
     </section>
     <div class="page">
+      ${rail('Nézd tovább', cont, continueTile)}
       ${rail('♥ Kedvenceim', favorites)}
       ${rail('Legjobbra értékelt', byRating)}
       ${rail('Filmek', titles.filter((t) => t.type === 'movie'))}
@@ -1039,6 +1065,13 @@ async function titlePage({ id }) {
   const access = hasAccess();
   const first = t.episodes[0];
   const playHref = t.type === 'movie' ? `/watch/${t.id}` : first ? `/watch/${t.id}/${first.id}` : null;
+  // Ott folytatja, ahol abbahagyta (7 napig): sorozatnál a legutóbbi epizód, filmnél a mentett pillanat
+  const pr = t.progress;
+  const resumable = access && pr && (t.type === 'series' ? !!pr.episode_id : pr.position >= 15);
+  const resumeHref = resumable ? (t.type === 'series' ? `/watch/${t.id}/${pr.episode_id}` : `/watch/${t.id}`) : null;
+  const resumeLabel = resumable
+    ? `▶ Folytatás (${t.type === 'series' ? `${pr.season}×${pr.number}${pr.position >= 15 ? `, ${fmtTime(pr.position)}` : ''}` : fmtTime(pr.position)})`
+    : '';
 
   return page(html`
     <div class="page">
@@ -1050,7 +1083,9 @@ async function titlePage({ id }) {
           <p>${t.description}</p>
           <div class="row" style="margin-bottom:28px">
             ${access
-              ? (playHref ? html`<a class="btn primary lg" href="${playHref}">▶ Lejátszás</a>` : html`<span class="muted">Ehhez a sorozathoz még nincs epizód.</span>`)
+              ? (resumable
+                ? html`<a class="btn primary lg" href="${resumeHref}">${resumeLabel}</a><a class="btn lg" href="${playHref}?start=0">Előlről</a>`
+                : playHref ? html`<a class="btn primary lg" href="${playHref}">▶ Lejátszás</a>` : html`<span class="muted">Ehhez a sorozathoz még nincs epizód.</span>`)
               : html`<a class="btn primary lg" href="/plans">Előfizetés a megtekintéshez</a>`}
             <button class="btn lg fav-btn ${t.fav ? 'on' : ''}" data-action="toggleFav" data-id="${t.id}" aria-pressed="${t.fav ? 'true' : 'false'}">${HEART} <span class="fav-label">${t.fav ? 'Kedvenc' : 'Kedvencekhez'}</span></button>
             <a class="btn lg" href="/browse/${t.type}">Vissza</a>
@@ -1073,7 +1108,7 @@ async function titlePage({ id }) {
 // ---- Egyidejű lejátszások (képernyők) ----
 // Minden lejátszó oldal egy azonosítót kap, és 45 másodpercenként jelez a szervernek. A szerver ebből számolja,
 // hány képernyőn néz a felhasználó egyszerre. Epizódváltáskor ugyanazt az azonosítót használjuk tovább.
-let activeWatch = null; // { stream, timer }
+let activeWatch = null; // { stream, timer, onStop }
 const newStreamId = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
 
 function endStream(stream) {
@@ -1087,24 +1122,42 @@ function endStream(stream) {
 function stopWatching() {
   if (!activeWatch) return;
   clearInterval(activeWatch.timer);
-  const { stream } = activeWatch;
+  const { stream, onStop } = activeWatch;
   activeWatch = null;
+  if (onStop) onStop(); // a nézés helyének mentése
   endStream(stream);
 }
-function startWatching(stream, onDenied) {
-  if (activeWatch) clearInterval(activeWatch.timer);
+function startWatching(stream, onDenied, onStop) {
+  if (activeWatch) { clearInterval(activeWatch.timer); if (activeWatch.onStop) activeWatch.onStop(); } // epizódváltás: az előző hely mentése
   activeWatch = {
-    stream,
+    stream, onStop,
     timer: setInterval(async () => {
       try { await api('/watch/ping', { method: 'POST', body: { stream } }); }
       catch (err) { if (err.status === 429 || err.status === 402) onDenied(err); }
     }, 45_000),
   };
 }
-window.addEventListener('pagehide', () => { if (activeWatch) endStream(activeWatch.stream); });
+window.addEventListener('pagehide', () => { if (activeWatch) { if (activeWatch.onStop) activeWatch.onStop(); endStream(activeWatch.stream); } });
 
-async function watchPage({ id, ep }) {
+// ---- Ott folytatja, ahol abbahagyta ----
+// A lejátszó 10 másodpercenként, szüneteltetéskor és kilépéskor elmenti a helyét; a mentés 7 napig érvényes.
+function sendProgress(body) {
+  try {
+    fetch(`${API_BASE}/api/progress`, {
+      method: 'PUT', keepalive: true, credentials: CROSS_ORIGIN ? 'omit' : 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body),
+    }).catch(() => {});
+  } catch { /* a lap már bezáródik */ }
+}
+const fmtTime = (sec) => {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+};
+
+async function watchPage({ id, ep, query }) {
   let data;
+  const fresh = query && query.get('start') === '0'; // „Előlről” gomb: a mentett hely figyelmen kívül marad
   const stream = activeWatch ? activeWatch.stream : newStreamId();
   try {
     data = await api(`/watch/${id}?stream=${stream}${ep ? `&episode=${ep}` : ''}`);
@@ -1120,11 +1173,17 @@ async function watchPage({ id, ep }) {
           </div>
         </div></div>`);
     }
-    throw err; // 402: lejárt az előfizetés, a route() a Csomagok oldalra irányít
+    throw err; // 402: lejárt az előfizetés, a route() a főoldalra irányít
   }
+  let saved = null;
+  if (!fresh) { try { saved = await api(`/progress/${id}`); } catch { /* nem baj: előlről indul */ } }
   const eps = data.episodes;
   const idx = data.episode ? eps.findIndex((e) => e.id === data.episode.id) : -1;
   const next = idx > -1 ? eps[idx + 1] : null;
+  const prev = idx > 0 ? eps[idx - 1] : null;
+  // Csak ugyanannak az epizódnak (vagy a filmnek) a mentett helye számít
+  const resume = saved && saved.position >= 15 && (!data.episode || saved.episode_id === data.episode.id) ? saved : null;
+  const embed = data.kind === 'embed';
 
   return page(html`
     <div class="page">
@@ -1137,13 +1196,23 @@ async function watchPage({ id, ep }) {
       </div>
       <div class="player-wrap ${eps.length ? '' : 'solo'}">
         <div>
-          ${data.kind === 'embed'
-            ? html`<div class="embed-frame"><iframe id="player" src="${data.url}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" title="${data.title}"></iframe></div>
-                <p class="muted" style="font-size:.85rem;margin-top:8px">Külső lejátszó – a következő rész automatikus indítása ennél a videónál nem működik.</p>`
-            : html`<video id="player" controls autoplay playsinline controlsList="nodownload noremoteplayback" src="${mediaUrl(data.url)}"></video>`}
+          <div class="player-shell ${embed ? 'is-embed' : ''}" style="--h:${data.hue ?? 0}">
+            ${data.poster && html`<div class="player-backdrop" style="background-image:url('${coverUrl(data.poster)}')"></div>`}
+            ${embed
+              ? html`<iframe id="player" src="${data.url}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" title="${data.title}"></iframe>
+                  <div class="player-loading" id="player-loading"><span class="spinner"></span><span>Betöltés…</span></div>`
+              : html`<video id="player" controls autoplay playsinline controlsList="nodownload noremoteplayback" src="${mediaUrl(data.url)}"></video>`}
+          </div>
           <p id="player-error" class="form-error"></p>
+          ${resume && !embed && html`<div class="resume-note" id="resume-note">
+            <span>▶ Ott folytatod, ahol abbahagytad: <strong>${fmtTime(resume.position)}</strong></span>
+            <button class="btn sm" data-action="watchRestart">Előlről kezdem</button></div>`}
           <div class="row between" style="margin-top:10px">
-            <span class="quality-tag" title="A csomagod által adott minőség">${data.qualityLabel}</span>
+            <div class="row" style="gap:8px">
+              <span class="quality-tag" title="A csomagod által adott minőség">${data.qualityLabel}</span>
+              ${prev && html`<a class="btn sm" href="/watch/${id}/${prev.id}">◀ Előző rész</a>`}
+              ${next && html`<a class="btn sm" href="/watch/${id}/${next.id}">Következő rész ▶</a>`}
+            </div>
             ${data.higherQuality && html`<span class="muted" style="font-size:.9rem">Ez a tartalom ${QUALITY_FULL[data.higherQuality]} minőségben is elérhető nagyobb csomaggal. <a href="/plans" style="color:var(--accent)">Csomagok</a></span>`}
           </div>
         </div>
@@ -1155,19 +1224,55 @@ async function watchPage({ id, ep }) {
       </div>
     </div>`, () => {
     const v = document.getElementById('player');
+    const body = (position, duration) => ({ titleId: Number(id), episodeId: data.episode ? data.episode.id : undefined, position, duration });
+    let lastSaved = -1;
+    const save = (finished) => {
+      if (embed || !v.duration || !Number.isFinite(v.duration)) return;
+      const pos = finished ? v.duration : v.currentTime;
+      if (!finished && Math.abs(pos - lastSaved) < 2) return;
+      lastSaved = pos;
+      sendProgress(body(pos, v.duration));
+    };
     // Ha közben elfogyott a hely (másik eszközön is elindult a lejátszás), leállítjuk ezt a lejátszót
     startWatching(data.stream, (err) => {
-      if (data.kind === 'embed') v.src = 'about:blank';
+      if (embed) v.src = 'about:blank';
       else { v.pause(); v.removeAttribute('src'); v.load(); }
       stopWatching();
-      if (err.status === 402) { onExpiry(); return; } // lejárt: ellenőrzés, majd a Csomagok oldalra irányítás
+      if (err.status === 402) { onExpiry(); return; } // lejárt: ellenőrzés, majd a főoldalra irányítás
       document.getElementById('player-error').textContent = err.message;
-    });
-    if (data.kind === 'embed') return;
+    }, () => save(false));
+
+    if (embed) {
+      // A beágyazott lejátszó belsejébe nem látunk bele, ezért a pontos hely nem menthető; sorozatnál az epizódot elmentjük
+      const hideLoading = () => { const l = document.getElementById('player-loading'); if (l) l.classList.add('done'); };
+      v.addEventListener('load', hideLoading);
+      setTimeout(hideLoading, 8000);
+      if (data.episode) sendProgress(body(0, 0));
+      return;
+    }
     v.addEventListener('error', () => { document.getElementById('player-error').textContent = 'A videó nem tölthető be. Próbáld újra később.'; });
-    if (next) v.addEventListener('ended', () => { navigate(`/watch/${id}/${next.id}`); });
+    if (resume) {
+      v.addEventListener('loadedmetadata', () => {
+        if (!v.duration || resume.position < v.duration - 45) v.currentTime = resume.position;
+      }, { once: true });
+      setTimeout(() => { const n = document.getElementById('resume-note'); if (n) n.classList.add('done'); }, 12_000);
+    }
+    const timer = setInterval(() => {
+      if (!document.body.contains(v)) clearInterval(timer);
+      else if (!v.paused) save(false);
+    }, 10_000);
+    v.addEventListener('pause', () => { if (!v.ended) save(false); });
+    v.addEventListener('ended', () => {
+      save(true);
+      if (next) navigate(`/watch/${id}/${next.id}`);
+    });
   });
 }
+actions.watchRestart = () => {
+  const v = document.getElementById('player');
+  if (v && v.currentTime !== undefined) { v.currentTime = 0; v.play().catch(() => {}); }
+  const n = document.getElementById('resume-note'); if (n) n.remove();
+};
 
 // ==========================================================
 //  Csomagok, fizetés
@@ -1368,7 +1473,8 @@ async function accountPage() {
       ${s.state === 'active' && html`<button class="btn danger" data-action="cancelMine">Lemondás</button>`}
       ${s.state === 'cancelled' && html`<a class="btn primary" href="/checkout/${s.plan_id}">${s.stripe ? 'Lemondás visszavonása' : 'Előfizetés újra'}</a><a class="btn" href="/plans">Másik csomag választása</a>`}
       ${s.state === 'expired' && html`<a class="btn primary" href="/plans">Új előfizetés</a>`}
-      ${latestInvoice && html`<button class="btn" data-action="downloadInvoice" data-id="${latestInvoice.invoice_id}" data-number="${latestInvoice.invoice_number}" title="A legutóbbi kifizetés számlája (${latestInvoice.invoice_number})">📄 Számla letöltése</button>`}
+      ${latestInvoice && html`<button class="btn" data-action="downloadInvoice" data-id="${latestInvoice.invoice_id}" data-number="${latestInvoice.invoice_number}" title="A legutóbbi kifizetés számlája (${latestInvoice.invoice_number})">📄 Számla letöltése</button>
+        ${latestInvoice.invoice_expires_at && html`<span class="muted" style="font-size:.82rem;max-width:240px;line-height:1.3">Eddig tölthető le: ${fmtDateShort(latestInvoice.invoice_expires_at)}, utána automatikusan törlődik. Kérjük, mentsd el.</span>`}`}
       ${s.stripe && html`<button class="btn" data-action="openPortal">Fizetési mód és számlák (Stripe)</button>`}
       ${demo && s.state !== 'expired' && html`<button class="btn" data-action="renewMine">Megújítás +30 nap (teszt)</button>`}
     </div>
@@ -1753,9 +1859,10 @@ async function adminContent() {
         <td>${t.poster ? html`<img class="thumb" src="${coverUrl(t.poster)}" alt="" loading="lazy">` : html`<span class="thumb none" title="Nincs borítókép, színes háttér látszik">–</span>`}</td>
         <td><strong>${t.title}</strong> ${t.featured ? html`<span class="badge info">Kiemelt</span>` : ''}</td>
         <td>${t.type === 'movie' ? 'Film' : `Sorozat (${t.episode_count} epizód)`}</td>
-        <td>${t.genre}</td><td>${t.year}</td><td>${ageLabel(t.age)}</td><td>★ ${Number(t.rating).toFixed(1)}</td>
+        <td>${t.genre}</td><td>${t.year}</td><td>${ageLabel(t.age)}</td><td>${t.rating > 0 ? html`★ ${Number(t.rating).toFixed(1)}${t.rating_source && html`<br><span class="muted">${t.rating_source}</span>`}` : html`<span class="muted">–</span>`}</td>
         <td class="actions">
           ${t.type === 'series' && html`<button class="btn sm" data-action="episodes" data-id="${t.id}">Epizódok</button>`}
+          <button class="btn sm" data-action="titleRating" data-id="${t.id}" title="Az AI újra megkeresi a globális értékelést">AI értékelés</button>
           <button class="btn sm" data-action="titleEdit" data-id="${t.id}">Szerkesztés</button>
           <button class="btn sm danger" data-action="titleDelete" data-id="${t.id}">Törlés</button>
         </td></tr>`)}</tbody></table></div>` : emptyBox('Még nincs tartalom.')}`;
@@ -1783,7 +1890,8 @@ const titleFields = (t = {}) => [
   { name: 'year', label: 'Elkészülésének éve', type: 'number', value: t.year ?? new Date().getFullYear(), min: 1888, max: new Date().getFullYear() + 2 },
   { name: 'age', label: 'Ajánlott életkor', type: 'select', value: t.age ?? 12, options: AGE_OPTIONS },
   { name: 'genre', label: 'Műfaj', value: t.genre },
-  { name: 'rating', label: 'Értékelés (0–10)', type: 'number', step: '0.1', value: t.rating ?? 7, min: 0, max: 10 },
+  { name: 'rating', label: 'Értékelés (0–10, automatikus)', type: 'number', step: '0.1', value: t.rating > 0 ? t.rating : '', min: 0, max: 10, required: false,
+    hint: 'Hagyd üresen: az AI megkeresi, hányas értékelést kapott globálisan, és azt írja ki (a mentés pár másodpercig tarthat). Ha számot írsz be, az lesz az értékelés.' },
   { name: 'poster', label: 'Borítókép', type: 'image', value: t.poster,
     hint: 'Ez lesz a film vagy sorozat borítóképe. Álló, 2:3 arányú kép ajánlott (pl. 600×900 px), JPEG, PNG vagy WebP, legfeljebb 8 MB.' },
   { name: 'duration_min', label: 'Hossz (perc)', type: 'number', value: t.duration_min ?? 90, min: 1, max: 1000, showIf: { name: 'type', value: 'movie' } },
@@ -1797,9 +1905,10 @@ function newTitleForm(prefill = {}, recId = null) {
     title: 'Új tartalom', fields: titleFields(prefill), submit: 'Létrehozás', wide: true,
     async onSubmit(v) {
       if (!v.poster) throw new Error('Tölts fel borítóképet: ez lesz a film vagy sorozat borítóképe.');
-      const { id } = await api('/admin/titles', { method: 'POST', body: v });
+      const { id, rating, ratingSource, ratingError } = await api('/admin/titles', { method: 'POST', body: v });
       if (recId) await api(`/admin/recommendations/${recId}`, { method: 'PATCH', body: { status: 'added' } });
-      toast('Tartalom létrehozva.');
+      toast(ratingSource ? `Tartalom létrehozva. Az AI értékelése: ★ ${Number(rating).toFixed(1)} (${ratingSource}).` : 'Tartalom létrehozva.');
+      if (ratingError) toast(`Az értékelést nem sikerült automatikusan megkeresni: ${ratingError}`, 'error');
       if (v.type === 'series') {
         A.titles = await api('/admin/titles');
         toast('Most add hozzá a sorozat epizódjait.');
@@ -1812,6 +1921,15 @@ function newTitleForm(prefill = {}, recId = null) {
 
 Object.assign(actions, {
   titleNew: () => newTitleForm(),
+  async titleRating(el) {
+    const t = findBy(A.titles, el.dataset.id);
+    el.disabled = true; const old = el.textContent; el.textContent = 'Keresés…';
+    try {
+      const r = await api(`/admin/titles/${t.id}/rating`, { method: 'POST' });
+      toast(`„${t.title}”: ★ ${Number(r.rating).toFixed(1)} (${r.ratingSource || 'AI'})`);
+      refresh();
+    } finally { el.disabled = false; el.textContent = old; }
+  },
   titleEdit(el) {
     const t = findBy(A.titles, el.dataset.id);
     openForm({
@@ -1891,6 +2009,7 @@ async function adminInvoices() {
       <input class="grow" name="q" value="${A.invQ}" placeholder="Keresés sorszám, vevő neve vagy e-mail címe alapján…">
       <button class="btn">Keresés</button>
     </form>
+    <p class="muted" style="font-size:.88rem">A számlák a beállított megőrzési idő után (alapból 3 hónap) automatikusan törlődnek a rendszerből. A könyveléshez időben mentsd le őket (PDF). A megőrzési idő a Cégadatok fülön állítható.</p>
     ${A.invoices.length ? html`<p class="muted">${A.invoices.length} számla, összesen ${fmtMoney(total)}</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Sorszám</th><th>Kelt</th><th>Vevő</th><th>Tétel</th><th>Nettó</th><th>ÁFA</th><th>Bruttó</th><th></th></tr></thead>
@@ -1913,8 +2032,10 @@ async function adminSettings() {
   let v;
   try { v = await api('/admin/settings'); } catch (err) {
     if (err.status !== 404) throw err;
-    return emptyBox('A szerver még a régi változatot futtatja. Töltsd fel a szerver friss fájljait (server.js, db.js, invoices.js), és indítsd újra.');
+    return emptyBox('A szerver még a régi változatot futtatja. Töltsd fel a szerver friss fájljait, és indítsd újra.');
   }
+  let ai = null;
+  try { ai = await api('/admin/ai'); } catch { /* régi szerver */ }
   const field = (name, label, { hint, type = 'text', placeholder = '', wide = false, max = 200 } = {}) => html`
     <div class="field ${wide ? 'wide' : ''}"><label for="s_${name}">${label}</label>
       <input id="s_${name}" name="${name}" type="${type}" value="${v[name] || ''}" maxlength="${max}" placeholder="${placeholder}" autocomplete="off">
@@ -1926,19 +2047,20 @@ async function adminSettings() {
         Egyeztess a könyvelőddel arról, hogy pontosan mit kell szerepeltetni.</p>
       <div class="card">
         <h2>A szolgáltató (üzemeltető) adatai</h2>
+        <p class="muted">Csak a vállalkozási forma, a név, a székhely és az e-mail cím ajánlott. Az adószám, a telefonszám és a nyilvántartási szám <strong>nem kötelező</strong>: ha üresen hagyod, a jogi oldalakról és a számláról a megfelelő sor egyszerűen kimarad.</p>
         <div class="grid-2">
-          ${field('name', 'Név / cégnév', { placeholder: 'pl. Minta Kft. vagy Minta János e.v.', max: 120 })}
-          ${field('taxId', 'Adószám', { placeholder: '12345678-1-42', max: 40 })}
+          ${field('businessType', 'Vállalkozási forma', { placeholder: 'egyéni vállalkozó', hint: 'Üresen hagyva: „egyéni vállalkozó”.', max: 60 })}
+          ${field('name', 'Név', { placeholder: 'pl. Minta János', max: 120 })}
           ${field('address', 'Székhely / levelezési cím', { placeholder: '1111 Budapest, Minta utca 1.', wide: true })}
-          ${field('regNumber', 'Nyilvántartási szám', { hint: 'Cégjegyzékszám (cég) vagy egyéni vállalkozói nyilvántartási szám.', max: 60 })}
-          ${field('regLabel', 'A szám megnevezése', { hint: 'Pl. „cégjegyzékszám” vagy „egyéni vállalkozói nyilvántartási szám”. Ha üres, mindkettő szerepel.', max: 60 })}
           ${field('email', 'E-mail cím', { type: 'email', hint: 'Ügyfélszolgálat, adatvédelmi kérelmek, panaszok.', max: 120 })}
-          ${field('phone', 'Telefonszám', { placeholder: '+36 30 123 4567', max: 40 })}
+          ${field('phone', 'Telefonszám (nem kötelező)', { placeholder: '+36 30 123 4567', max: 40 })}
+          ${field('taxId', 'Adószám (nem kötelező)', { placeholder: '12345678-1-42', max: 40 })}
+          ${field('regNumber', 'Nyilvántartási szám (nem kötelező)', { hint: 'Egyéni vállalkozói nyilvántartási szám.', max: 60 })}
         </div>
       </div>
       <div class="card">
-        <h2>Tárhelyszolgáltató</h2>
-        <p class="muted">Az a cég, amelynél a Node szerver (az Impix működtetése) fut. Az impresszumban és az adatkezelési tájékoztatóban kötelező feltüntetni.</p>
+        <h2>Tárhelyszolgáltató (nem kötelező)</h2>
+        <p class="muted">Az a cég, amelynél a Node szerver (az Impix működtetése) fut. Ha megadod, az impresszumban és az adatkezelési tájékoztatóban megjelenik.</p>
         <div class="grid-2">
           ${field('hostingName', 'Neve', { max: 120 })}
           ${field('hostingEmail', 'E-mail címe', { type: 'email', max: 120 })}
@@ -1950,12 +2072,33 @@ async function adminSettings() {
         <div class="grid-2">
           ${field('vatRate', 'ÁFA kulcs (%)', { type: 'number', hint: 'Üresen hagyva 27%. Alanyi adómentesség esetén 0.', max: 2 })}
           ${field('vatNote', 'Megjegyzés a számlán', { hint: 'Pl. alanyi adómentesség szövege. 0% esetén alapból „Alanyi adómentes”.' })}
+          ${field('invoiceMonths', 'Számlák megőrzése (hónap)', { type: 'number', hint: 'Ennyi hónap után a számlák automatikusan törlődnek a rendszerből (üresen: 3 hónap; 0: soha nem törlődnek). FIGYELEM: a számviteli szabályok hosszabb megőrzést írhatnak elő, ezt egyeztesd a könyvelőddel, és a számlákat a Számlák fülről időben mentsd le.', max: 3, wide: true })}
         </div>
       </div>
       <p class="form-error" role="alert"></p>
       <div><button class="btn primary lg">Mentés</button></div>
+    </form>
+    <form class="form settings-form" data-form="adminAi" style="margin-top:24px">
+      <div class="card">
+        <h2>Automatikus értékelés (AI)</h2>
+        <p class="muted">Új film vagy sorozat feltöltésekor, ha az értékelést üresen hagyod, egy AI (Claude) a weben megkeresi, hányas értékelést kapott globálisan (elsősorban IMDb), és azt írja ki.
+          Ehhez egy Anthropic API kulcs kell (console.anthropic.com), amelynek használata az Anthropic felé díjköteles (címenként néhány cent). A kulcsot biztonságosan, csak a szerveren tároljuk.</p>
+        <div class="field"><label for="ai_key">Anthropic API kulcs</label>
+          <input id="ai_key" name="apiKey" type="password" autocomplete="off" placeholder="${ai && ai.configured ? `Be van állítva (…${ai.last4}). Új kulcs beírásával lecserélheted.` : 'sk-ant-…'}" maxlength="300">
+          <span class="hint">${ai && ai.configured ? html`Állapot: <strong>beállítva</strong> (${ai.source === 'env' ? 'a szerver .env fájljából' : 'az admin panelről'}).` : 'Állapot: nincs beállítva, az értékelést kézzel kell megadni.'}</span></div>
+        ${ai && ai.configured && ai.source === 'admin' && html`<div class="field check"><input type="checkbox" id="ai_clear" name="clear"><label for="ai_clear">A mentett kulcs törlése</label></div>`}
+        <p class="form-error" role="alert"></p>
+        <div><button class="btn primary">Mentés</button></div>
+      </div>
     </form>`;
 }
+forms.adminAi = async (d) => {
+  if (d.clear === 'on') await api('/admin/ai', { method: 'PUT', body: { apiKey: '' } });
+  else if ((d.apiKey || '').trim()) await api('/admin/ai', { method: 'PUT', body: { apiKey: d.apiKey } });
+  else throw new Error('Írd be az API kulcsot, vagy pipáld be a törlést.');
+  toast('Az AI beállítása mentve.');
+  refresh();
+};
 forms.adminSettings = async (d) => {
   await api('/admin/settings', { method: 'PUT', body: d });
   legalInfo = null; // a jogi oldalak újratöltik az adatokat
