@@ -1511,7 +1511,7 @@ async function adminOverview(s) {
   const tlsDays = s.tlsExpiresAt ? Math.ceil((s.tlsExpiresAt - Date.now()) / 86_400_000) : null;
   const payBanner = (kind, title, text) => html`<div class="banner" role="${kind === 'bad' ? 'alert' : 'status'}"><div><strong>${title}</strong><div class="muted">${text}</div></div></div>`;
   return html`
-    ${s.legalMissing.length > 0 && html`<div class="banner" role="status"><div><strong>A cégadatok hiányosak.</strong>
+    ${(s.legalMissing || []).length > 0 && html`<div class="banner" role="status"><div><strong>A cégadatok hiányosak.</strong>
       <div class="muted">Az ÁSZF, az adatkezelési tájékoztató, az impresszum és a számlák ezekből töltődnek ki. Hiányzik: ${s.legalMissing.join(', ')}.</div></div>
       <a class="btn primary" href="/admin/settings">Kitöltöm</a></div>`}
     ${s.payments === 'off' && payBanner('bad', 'A bankkártyás fizetés nincs beállítva.', 'A felhasználók most nem tudnak előfizetni. Add meg a STRIPE_SECRET_KEY értékét a szerver .env fájljában (lásd STRIPE.md).')}
@@ -1910,7 +1910,11 @@ forms.adminInvSearch = (d) => { A.invQ = (d.q || '').trim(); return refresh(); }
 // ----- Cégadatok (ÁSZF, adatkezelés, impresszum, számlák) -----
 
 async function adminSettings() {
-  const v = await api('/admin/settings');
+  let v;
+  try { v = await api('/admin/settings'); } catch (err) {
+    if (err.status !== 404) throw err;
+    return emptyBox('A szerver még a régi változatot futtatja. Töltsd fel a szerver friss fájljait (server.js, db.js, invoices.js), és indítsd újra.');
+  }
   const field = (name, label, { hint, type = 'text', placeholder = '', wide = false, max = 200 } = {}) => html`
     <div class="field ${wide ? 'wide' : ''}"><label for="s_${name}">${label}</label>
       <input id="s_${name}" name="${name}" type="${type}" value="${v[name] || ''}" maxlength="${max}" placeholder="${placeholder}" autocomplete="off">
