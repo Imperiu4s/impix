@@ -36,6 +36,9 @@ Környezeti változók:
 | `STRIPE_SECRET_KEY` | Stripe titkos kulcs (bankkártyás fizetés, lásd [STRIPE.md](STRIPE.md)) |
 | `STRIPE_WEBHOOK_SECRET` | a Stripe webhook aláíró titka (`whsec_…`) |
 | `SITE_URL` | a weboldal címe (ide tér vissza a felhasználó a fizetés után), pl. `https://impix.hu` |
+| `SELLER_NAME`, `SELLER_ADDRESS`, `SELLER_TAX_ID`, `SELLER_EMAIL` | az eladó adatai a számlákon |
+| `SELLER_VAT_RATE` | ÁFA kulcs % (alap: 27; alanyi adómentesség: 0), `SELLER_VAT_NOTE`: megjegyzés a számlán |
+| `INVOICE_PREFIX` | a számla sorszámának előtagja (alap: `IMPIX`) |
 | `DEMO_PAYMENTS=1` | csak teszteléshez: ingyenes előfizetés Stripe nélkül (élesen tilos) |
 | `MEDIA_SECRET` | feltöltött videólinkek aláírásához (alapból a `data/media.key` fájlba generálódik) |
 | `TRUST_PROXY` | reverse proxy mögött állítsd `1`-re (HTTPS felismerés, kliens IP) |
@@ -85,6 +88,10 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
 - Regisztráció, belépés, kilépés, profil- és jelszómódosítás
 - Előfizetés **bankkártyával (Stripe)**, havi automatikus megújulással, lemondás, számlázási portál. Aktív előfizetés mellett
   csomagot váltani nem lehet, előbb le kell mondani ([STRIPE.md](STRIPE.md))
+- **Számla letöltése**: minden kifizetett előfizetési díjról sorszámozott számla-PDF készül, amit a felhasználó a Fiók oldalon tölthet le
+  (nem kell e-mail). Az admin panel „Számlák” fülén könyveléshez minden számla látható. Az eladó adatait a `SELLER_*` beállítások adják;
+  a jogi megfelelésről lásd a [STRIPE.md](STRIPE.md) „Számlák” részét.
+- **Tiszta címek**: `impix.hu`, `impix.hu/plans` (nem `impix.hu/#/plans`); a régi `#/` címek is működnek
 - A csomag **tényleg azt adja, ami benne van**: Alap 720p / 1 képernyő, Standard 1080p / 2 képernyő, Prémium 4K / 4 képernyő
   (a szerver kényszeríti ki: a magasabb minőségű videólink ki sem megy, és az egyidejű lejátszások számát is számolja)
 - Katalógus (filmek, sorozatok, keresés, műfajszűrés), lejátszó, sorozatoknál automatikus következő epizód
@@ -94,7 +101,7 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
 - **Kedvencek**: a ♥ gombbal bármelyik film/sorozat a kedvencekbe tehető (külön oldal + sáv a főoldalon)
 - **Ajánlás**: a felhasználó filmet/sorozatot ajánlhat az adminnak (cím, típus, link, megjegyzés), és látja az állapotát
 
-**Admin panel** (`/#/admin`)
+**Admin panel** (`/admin`)
 - Áttekintés: felhasználók, aktív/lejárt előfizetések, bevétel, csomag-eloszlás
 - Felhasználók: keresés, előfizetés adása, admin jog adása/elvétele, tiltás, törlés
 - Előfizetések: szűrés állapot szerint, adás, megújítás (N nappal), szerkesztés (csomag, lejárat), azonnali megszüntetés, törlés

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Impix</title>
+  <script>
+    // A GitHub Pages csak valódi fájlokat ismer, ezért az alkalmazás belső címeit (pl. /plans, /watch/3) ide
+    // dobja. Átirányítunk a főoldalra (/?/plans), ahol a spa-restore.js visszaállítja az eredeti címet.
+    var l = window.location;
+    l.replace(
+      l.protocol + '//' + l.host + '/?/' +
+      l.pathname.slice(1).replace(/&/g, '~and~') +
+      (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+      l.hash
+    );
+  </script>
+</head>
+<body></body>
+</html>

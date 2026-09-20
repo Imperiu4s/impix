@@ -104,6 +104,33 @@ CREATE TABLE IF NOT EXISTS recommendations (
   created_at INTEGER NOT NULL
 );
 
+-- Kiállított számlák. Kiállítás után a tartalmuk nem változik (az eladó és a vevő adatai pillanatképként tárolódnak),
+-- és a felhasználó vagy a fizetés törlésekor is megmaradnak (a számlákat jogszabály szerint meg kell őrizni).
+CREATE TABLE IF NOT EXISTS invoices (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  year           INTEGER NOT NULL,
+  seq            INTEGER NOT NULL,
+  number         TEXT NOT NULL UNIQUE,
+  user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  payment_id     INTEGER UNIQUE REFERENCES payments(id) ON DELETE SET NULL,
+  issued_at      INTEGER NOT NULL,
+  paid_at        INTEGER NOT NULL,
+  buyer_name     TEXT NOT NULL,
+  buyer_email    TEXT NOT NULL,
+  buyer_address  TEXT NOT NULL DEFAULT '',
+  description    TEXT NOT NULL,
+  period_start   INTEGER,
+  period_end     INTEGER,
+  net            INTEGER NOT NULL,
+  vat_rate       INTEGER NOT NULL,
+  vat            INTEGER NOT NULL,
+  gross          INTEGER NOT NULL,
+  payment_method TEXT NOT NULL,
+  reference      TEXT NOT NULL DEFAULT '',
+  seller         TEXT NOT NULL,
+  UNIQUE (year, seq)
+);
+
 -- Egyidejű lejátszások nyilvántartása (a csomag képernyőszámának betartatásához)
 CREATE TABLE IF NOT EXISTS streams (
   id         TEXT PRIMARY KEY,
@@ -139,14 +166,21 @@ addColumn('users', 'stripe_customer_id', 'TEXT');
 addColumn('subscriptions', 'stripe_subscription_id', 'TEXT');
 addColumn('subscriptions', 'stripe_last_invoice', 'TEXT');
 addColumn('subscriptions', 'stripe_synced_at', 'INTEGER');
+// Melyik Stripe számlához tartozik a fizetés (így egy számla csak egyszer kerül rögzítésre)
+addColumn('payments', 'stripe_invoice_id', 'TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_stripe_invoice ON payments(stripe_invoice_id) WHERE stripe_invoice_id IS NOT NULL');
 // Magasabb minőségű változatok (a videó alap, azaz `video_url` a 720p vagy alacsonyabb változat)
 for (const table of ['titles', 'episodes']) {
   addColumn(table, 'video_url_1080', 'TEXT');
   addColumn(table, 'video_url_2160', 'TEXT');
 }
 
+// Tranzakció. Egymásba ágyazható: a belső hívás a külső tranzakció része lesz, hiba esetén az egész visszagörgetődik.
+let txDepth = 0;
 export function tx(fn) {
+  if (txDepth > 0) return fn();
   db.exec('BEGIN');
+  txDepth++;
   try {
     const result = fn();
     db.exec('COMMIT');
@@ -154,6 +188,8 @@ export function tx(fn) {
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
+  } finally {
+    txDepth--;
   }
 }
 

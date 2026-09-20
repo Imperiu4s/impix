@@ -7,6 +7,7 @@
 //    Így akkor is helyes marad az állapot, ha a webhook nem ér el a szerverhez.
 import Stripe from 'stripe';
 import db, { tx } from './db.js';
+import { issueInvoice, formatAddress } from './invoices.js';
 
 const DAY = 86_400_000;
 const KEY = process.env.STRIPE_SECRET_KEY || '';
@@ -86,10 +87,12 @@ export async function createCheckout(user, plan) {
     customer,
     client_reference_id: String(user.id),
     line_items: [{ price: priceId, quantity: 1 }],
-    // A hash előtti query-ben jön vissza a munkamenet azonosítója (a weboldal hash-alapú útvonalkezelést használ)
-    success_url: `${siteUrl}/?checkout_session={CHECKOUT_SESSION_ID}#/payment/return`,
-    cancel_url: `${siteUrl}/#/plans`,
+    success_url: `${siteUrl}/payment/return?checkout_session={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${siteUrl}/plans`,
     locale: 'hu',
+    // A számlához kell a vevő neve és címe: a Stripe bekéri, és elmenti az ügyfélhez
+    billing_address_collection: 'required',
+    customer_update: { name: 'auto', address: 'auto' },
     metadata: meta,
     subscription_data: { metadata: meta },
   });
@@ -122,7 +125,16 @@ export async function confirmCheckout(user, sessionId) {
 // ---------- Szinkron: Stripe → helyi adatbázis ----------
 
 export async function syncSubscription(subscriptionId, hint = {}) {
-  const sub = await client().subscriptions.retrieve(subscriptionId, { expand: ['latest_invoice'] });
+  const s = client();
+  const sub = await s.subscriptions.retrieve(subscriptionId, { expand: ['latest_invoice'] });
+  // Ha van még nem rögzített, kifizetett Stripe számla, lekérjük az összes kifizetettet (és a vevő adatait), hogy
+  // mindegyikről fizetés és számla készüljön. Így akkor sem marad ki egy megújítás, ha a felhasználó hetekig nem járt az oldalon.
+  const latest = sub.latest_invoice && typeof sub.latest_invoice === 'object' ? sub.latest_invoice : null;
+  if (latest && latest.status === 'paid' && !db.prepare('SELECT 1 FROM payments WHERE stripe_invoice_id = ?').get(latest.id)) {
+    const list = await s.invoices.list({ subscription: subscriptionId, status: 'paid', limit: 24 });
+    const customer = await s.customers.retrieve(idOf(sub.customer)).catch(() => null);
+    hint = { ...hint, paidInvoices: list.data, customer };
+  }
   return applyStripeSubscription(sub, hint);
 }
 
@@ -180,19 +192,35 @@ export function applyStripeSubscription(sub, hint = {}) {
     expiresAt = sameSub ? local.expires_at : t;
   }
 
-  // Kifizetett számla → fizetési előzmény (számlánként egyszer)
-  const invoice = sub.latest_invoice && typeof sub.latest_invoice === 'object' ? sub.latest_invoice : null;
+  // Kifizetett Stripe számlák → fizetési előzmény és sorszámozott számla (Stripe számlánként egyszer)
   let lastInvoice = sameSub ? local.stripe_last_invoice : null;
   const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(planId);
+  const paidInvoices = (hint.paidInvoices || []).filter((inv) => inv.status === 'paid').sort((a, b) => (a.created || 0) - (b.created || 0));
+  const buyer = {
+    name: (hint.customer && hint.customer.name) || user.name,
+    email: user.email,
+    address: formatAddress(hint.customer && hint.customer.address),
+  };
+  const item = sub.items && sub.items.data && sub.items.data[0];
 
   tx(() => {
-    if (invoice && invoice.status === 'paid' && invoice.id !== lastInvoice) {
-      const amount = Math.round((invoice.amount_paid || 0) / 100);
-      if (amount > 0) {
-        db.prepare('INSERT INTO payments (user_id, user_email, plan_name, amount, kind, created_at) VALUES (?,?,?,?,?,?)')
-          .run(user.id, user.email, plan.name, amount, sameSub ? 'stripe_renew' : 'stripe_subscribe', t);
-      }
-      lastInvoice = invoice.id;
+    for (const inv of paidInvoices) {
+      if (db.prepare('SELECT 1 FROM payments WHERE stripe_invoice_id = ?').get(inv.id)) continue;
+      const amount = Math.round((inv.amount_paid || 0) / 100);
+      lastInvoice = inv.id;
+      if (amount <= 0) continue;
+      const paidAt = ((inv.status_transitions && inv.status_transitions.paid_at) || inv.created || Math.floor(t / 1000)) * 1000;
+      const isFirst = inv.billing_reason ? inv.billing_reason === 'subscription_create' : !sameSub;
+      const paymentId = Number(db.prepare(`INSERT INTO payments (user_id, user_email, plan_name, amount, kind, created_at, stripe_invoice_id)
+        VALUES (?,?,?,?,?,?,?)`).run(user.id, user.email, plan.name, amount, isFirst ? 'stripe_subscribe' : 'stripe_renew', paidAt, inv.id).lastInsertRowid);
+      // A számlán szereplő időszak: a Stripe számla sora; ha nincs, az előfizetés aktuális időszaka
+      const period = (inv.lines && inv.lines.data && inv.lines.data[0] && inv.lines.data[0].period) || {};
+      issueInvoice({
+        paymentId, userId: user.id, gross: amount, paidAt, planName: plan.name,
+        periodStart: period.start ? period.start * 1000 : item && item.current_period_start ? item.current_period_start * 1000 : null,
+        periodEnd: period.end ? period.end * 1000 : periodEndOf(sub),
+        buyer, paymentMethod: 'Bankkártya (Stripe)', reference: inv.id,
+      });
     }
     if (local) {
       db.prepare(`UPDATE subscriptions SET plan_id = ?, status = ?, started_at = ?, expires_at = ?,
@@ -264,7 +292,7 @@ export async function cancelNow(stripeSubscriptionId) {
 export async function portalUrl(user) {
   if (!user.stripe_customer_id) throw new BillingError(400, 'Még nincs számlázási adatod.');
   const session = await client().billingPortal.sessions.create({
-    customer: user.stripe_customer_id, return_url: `${siteUrl}/#/account`,
+    customer: user.stripe_customer_id, return_url: `${siteUrl}/account`,
   });
   return session.url;
 }

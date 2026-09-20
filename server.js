@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 import db, { tx, seed } from './db.js';
 import { hashPassword, verifyPassword, verifyDummy, hashToken, newToken } from './security.js';
 import * as billing from './billing.js';
+import { issueInvoice, sellerConfigured, sellerConfig } from './invoices.js';
+import { renderInvoicePdf } from './invoice-pdf.js';
 
 // Pterodactyl panelen a kiosztott portot a SERVER_PORT változó adja
 const PORT = Number(process.env.PORT || process.env.SERVER_PORT) || 3000;
@@ -244,8 +246,16 @@ const hasAccess = (user) => user.role === 'admin' || (() => {
 
 function recordPayment(userId, planName, amount, kind) {
   const u = db.prepare('SELECT email FROM users WHERE id = ?').get(userId);
-  db.prepare('INSERT INTO payments (user_id, user_email, plan_name, amount, kind, created_at) VALUES (?,?,?,?,?,?)')
-    .run(userId, u.email, planName, amount, kind, Date.now());
+  return Number(db.prepare('INSERT INTO payments (user_id, user_email, plan_name, amount, kind, created_at) VALUES (?,?,?,?,?,?)')
+    .run(userId, u.email, planName, amount, kind, Date.now()).lastInsertRowid);
+}
+
+// Számla a (teszt) demó fizetésről. A valódi Stripe fizetések számláját a billing.js állítja ki.
+function issueDemoInvoice(user, paymentId, planName, amount, periodStart, periodEnd) {
+  return issueInvoice({
+    paymentId, userId: user.id, gross: amount, paidAt: Date.now(), planName, periodStart, periodEnd,
+    buyer: { name: user.name, email: user.email, address: '' }, paymentMethod: 'Teszt fizetés (demó)',
+  });
 }
 
 // Amit az előfizetés ténylegesen ad: legnagyobb videóminőség és egyidejű képernyők száma.
@@ -311,6 +321,7 @@ app.use('/api', (req, res, next) => {
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Impix-Upload, X-Impix-Token',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
       'Access-Control-Max-Age': '600',
+      'Access-Control-Expose-Headers': 'Content-Disposition',
     });
     if (req.method === 'OPTIONS') return res.sendStatus(204);
   }
@@ -470,7 +481,29 @@ app.patch('/api/me/prefs', requireAuth, (req, res) => {
 });
 
 app.get('/api/me/payments', requireAuth, (req, res) => {
-  res.json(db.prepare('SELECT id, plan_name, amount, kind, created_at FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(req.user.id));
+  res.json(db.prepare(`
+    SELECT p.id, p.plan_name, p.amount, p.kind, p.created_at, i.id AS invoice_id, i.number AS invoice_number
+    FROM payments p LEFT JOIN invoices i ON i.payment_id = p.id
+    WHERE p.user_id = ? ORDER BY p.created_at DESC, p.id DESC LIMIT 50`).all(req.user.id));
+});
+
+// ---------- Számlák ----------
+
+app.get('/api/invoices', requireAuth, (req, res) => {
+  res.json(db.prepare(`SELECT id, number, issued_at, paid_at, description, period_start, period_end, gross
+    FROM invoices WHERE user_id = ? ORDER BY issued_at DESC, id DESC`).all(req.user.id));
+});
+
+// A számla PDF-je: csak a tulajdonosa (és az admin) töltheti le. A PDF a kiállításkor mentett adatokból készül, ezért nem változik.
+app.get('/api/invoices/:id/pdf', requireAuth, async (req, res) => {
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(Number(req.params.id));
+  if (!inv || (inv.user_id !== req.user.id && req.user.role !== 'admin')) fail('A számla nem található.', 404);
+  const pdf = await renderInvoicePdf(inv);
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `attachment; filename="${inv.number}.pdf"`,
+    'Cache-Control': 'private, no-store',
+  }).send(pdf);
 });
 
 // ---------- Csomagok és saját előfizetés ----------
@@ -531,7 +564,8 @@ app.post('/api/subscription', requireAuth, (req, res) => {
       db.prepare("UPDATE subscriptions SET plan_id = ?, status = 'active', started_at = ?, expires_at = ? WHERE user_id = ?")
         .run(plan.id, t, t + PERIOD_DAYS * DAY, uid);
     }
-    recordPayment(uid, plan.name, plan.price, 'subscribe');
+    const paymentId = recordPayment(uid, plan.name, plan.price, 'subscribe');
+    issueDemoInvoice(req.user, paymentId, plan.name, plan.price, t, t + PERIOD_DAYS * DAY);
   });
   res.json({ subscription: subView(getSub(uid)) });
 });
@@ -542,9 +576,11 @@ app.post('/api/subscription/renew', requireAuth, (req, res) => {
   if (!cur) fail('Nincs előfizetésed.', 404);
   const t = Date.now();
   tx(() => {
+    const from = Math.max(t, cur.expires_at);
     db.prepare("UPDATE subscriptions SET status = 'active', expires_at = ? WHERE user_id = ?")
-      .run(Math.max(t, cur.expires_at) + PERIOD_DAYS * DAY, req.user.id);
-    recordPayment(req.user.id, cur.plan_name, cur.price, 'renew');
+      .run(from + PERIOD_DAYS * DAY, req.user.id);
+    const paymentId = recordPayment(req.user.id, cur.plan_name, cur.price, 'renew');
+    issueDemoInvoice(req.user, paymentId, cur.plan_name, cur.price, from, from + PERIOD_DAYS * DAY);
   });
   res.json({ subscription: subView(getSub(req.user.id)) });
 });
@@ -727,6 +763,8 @@ admin.get('/stats', (req, res) => {
     newRecommendations: newRecommendationCount(),
     tlsExpiresAt, // HTTPS tanúsítvány lejárata (null, ha a szerver nem maga szolgál ki HTTPS-t)
     payments: paymentsMode(),
+    invoiceConfigured: sellerConfigured(), // az eladó adatai (név, cím, adószám) meg vannak-e adva a számlákhoz
+    invoiceVatRate: sellerConfig().vatRate,
     stripeMode: billing.mode, // 'test', 'live' vagy null
     stripeWebhook: !!process.env.STRIPE_WEBHOOK_SECRET,
     byPlan: db.prepare(`
@@ -969,6 +1007,17 @@ admin.put('/upload', async (req, res) => {
   res.status(201).json({ url: `/media/${file}`, size });
 });
 
+// Kiállított számlák (könyveléshez): a PDF a /api/invoices/:id/pdf címen tölthető le
+admin.get('/invoices', (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const term = like(q);
+  res.json(db.prepare(`
+    SELECT id, number, issued_at, paid_at, buyer_name, buyer_email, description, period_start, period_end, net, vat_rate, vat, gross, payment_method
+    FROM invoices
+    ${q ? "WHERE number LIKE ? ESCAPE '\\' OR buyer_name LIKE ? ESCAPE '\\' OR buyer_email LIKE ? ESCAPE '\\'" : ''}
+    ORDER BY year DESC, seq DESC LIMIT 500`).all(...(q ? [term, term, term] : [])));
+});
+
 // Ajánlások kezelése
 admin.get('/recommendations', (req, res) => {
   const f = req.query.status;
@@ -1077,6 +1126,14 @@ app.get('/protect.js', (req, res) => {
 });
 
 app.use(express.static(fileURLToPath(new URL('./public/', import.meta.url))));
+
+// Az alkalmazás belső címei (/plans, /watch/3, …) ugyanazt az oldalt adják, az útvonalat a böngészőben kezeli az app.js.
+// (GitHub Pages-en ugyanezt a 404.html + spa-restore.js oldja meg.)
+const INDEX_HTML = fileURLToPath(new URL('./public/index.html', import.meta.url));
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || path.extname(req.path) || req.path.startsWith('/api/') || req.path.startsWith('/media/')) return next();
+  res.sendFile(INDEX_HTML);
+});
 
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);

@@ -119,7 +119,7 @@ const favButton = (t, cls = '') => html`
 
 const tile = (t) => html`
   <div class="tile-wrap">
-    <a class="tile" href="#/title/${t.id}" aria-label="${t.title}">
+    <a class="tile" href="/title/${t.id}" aria-label="${t.title}">
       ${poster(t)}
       <div class="tile-meta">${t.year} · ${t.genre} · ${ageLabel(t.age)}</div>
     </a>
@@ -163,10 +163,41 @@ const routes = [
 let navId = 0;
 let lastPath = null;
 
+// Az oldal valódi útvonalakat használ (impix.hu/plans), nem #-os címeket. A History API kezeli a navigációt.
 function currentRoute() {
-  const [path, qs] = (location.hash.slice(1) || '/').split('?');
-  return { path, query: new URLSearchParams(qs || '') };
+  const path = location.pathname.replace(/\/+$/, '') || '/';
+  return { path, query: new URLSearchParams(location.search) };
 }
+
+// Belső navigáció újratöltés nélkül. A route() a hívó kódja lefutása után indul (nem ágyazódik egymásba).
+function navigate(url, { replace = false } = {}) {
+  const target = new URL(url, location.origin);
+  const next = target.pathname + target.search;
+  if (replace) history.replaceState(null, '', next);
+  else if (next !== location.pathname + location.search) history.pushState(null, '', next);
+  queueMicrotask(() => route());
+}
+
+// Régi címek átalakítása: impix.hu/#/plans -> impix.hu/plans (könyvjelzők, már elindított Stripe-fizetések visszatérése)
+function migrateLegacyHash() {
+  if (!location.hash.startsWith('#/')) return false;
+  const [path, qs] = location.hash.slice(1).split('?');
+  history.replaceState(null, '', path + (qs ? `?${qs}` : location.search));
+  return true;
+}
+
+// Belső hivatkozások (<a href="/plans">) kezelése: nincs teljes oldalújratöltés
+document.addEventListener('click', (e) => {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download')) return;
+  const href = a.getAttribute('href');
+  if (!href || !href.startsWith('/') || href.startsWith('//')) return;
+  e.preventDefault();
+  navigate(href);
+});
+window.addEventListener('popstate', () => route());
+window.addEventListener('hashchange', () => { if (migrateLegacyHash()) route(); });
 
 async function route(keepScroll = false) {
   const my = ++navId;
@@ -181,15 +212,15 @@ async function route(keepScroll = false) {
     if (m) { keys.forEach((k, i) => { params[k] = m[i + 1]; }); handler = fn; guard = g; break; }
   }
 
-  if (guard && !state.user) { state.returnTo = location.hash || '#/'; location.hash = '#/login'; return; }
-  if (guard === 'admin' && state.user.role !== 'admin') { location.hash = '#/'; return; }
+  if (guard && !state.user) { state.returnTo = location.pathname + location.search; navigate('/login'); return; }
+  if (guard === 'admin' && state.user.role !== 'admin') { navigate('/'); return; }
 
   if (!path.startsWith('/watch/')) stopWatching(); // a lejátszó oldalról kilépve felszabadul a képernyő
   renderNav();
   if (path !== lastPath) $app.innerHTML = loading().__html;
 
   try {
-    const result = handler ? await handler(params) : page(html`<div class="page center"><h1>404</h1><p class="muted">Ez az oldal nem található.</p><a class="btn" href="#/">Vissza a főoldalra</a></div>`);
+    const result = handler ? await handler(params) : page(html`<div class="page center"><h1>404</h1><p class="muted">Ez az oldal nem található.</p><a class="btn" href="/">Vissza a főoldalra</a></div>`);
     if (my !== navId) return;
     $app.innerHTML = result.html.__html;
     if (result.mounted) result.mounted();
@@ -198,11 +229,11 @@ async function route(keepScroll = false) {
     if (my !== navId) return;
     if (err.status === 401) {
       state.user = null; state.sub = null;
-      state.returnTo = location.hash;
-      location.hash = '#/login';
+      state.returnTo = location.pathname + location.search;
+      navigate('/login');
       return;
     }
-    $app.innerHTML = html`<div class="page center"><h1>Hoppá!</h1><p class="muted">${err.message}</p><a class="btn" href="#/">Főoldal</a></div>`.__html;
+    $app.innerHTML = html`<div class="page center"><h1>Hoppá!</h1><p class="muted">${err.message}</p><a class="btn" href="/">Főoldal</a></div>`.__html;
   }
 
   if (!keepScroll && path !== lastPath) { window.scrollTo(0, 0); }
@@ -211,11 +242,7 @@ async function route(keepScroll = false) {
 }
 const refresh = () => route(true);
 
-// Ugyanarra a hash-re navigálva nincs hashchange esemény, ilyenkor kézzel frissítünk.
-function goTo(hash) {
-  if (location.hash === hash || (!location.hash && hash === '#/')) route();
-  else location.hash = hash;
-}
+const goTo = (url) => navigate(url);
 
 // ---------- Navigáció ----------
 
@@ -226,7 +253,7 @@ const ICON_MOON = svgIcon('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z
 function renderNav() {
   const { path } = currentRoute();
   const u = state.user;
-  const link = (href, label) => html`<a href="#${href}" class="${(href === '/' ? path === '/' : path.startsWith(href)) ? 'active' : ''}">${label}</a>`;
+  const link = (href, label) => html`<a href="${href}" class="${(href === '/' ? path === '/' : path.startsWith(href)) ? 'active' : ''}">${label}</a>`;
   const links = html`
     ${u && link('/', 'Főoldal')}
     ${u && link('/browse/movie', 'Filmek')}
@@ -240,7 +267,7 @@ function renderNav() {
 
   $nav.innerHTML = html`
     <header class="nav">
-      <a class="logo" href="#/" aria-label="Impix főoldal">IMPIX</a>
+      <a class="logo" href="/" aria-label="Impix főoldal">IMPIX</a>
       <nav class="nav-links" aria-label="Fő navigáció">${links}</nav>
       <div class="nav-spacer"></div>
       ${u && html`<form class="nav-search" data-form="search" role="search">
@@ -253,13 +280,13 @@ function renderNav() {
             <button class="avatar" data-action="toggleMenu" aria-label="Fiók menü">${u.name.trim()[0].toUpperCase()}</button>
             <div class="menu-panel">
               <div class="menu-head"><strong>${u.name}</strong><small>${u.email}</small></div>
-              <a href="#/account">Fiók és előfizetés</a>
-              ${u.role === 'admin' && html`<a href="#/admin">Admin panel</a>`}
+              <a href="/account">Fiók és előfizetés</a>
+              ${u.role === 'admin' && html`<a href="/admin">Admin panel</a>`}
               <button data-action="logout">Kijelentkezés</button>
             </div>
           </div>` : html`
-          <a class="btn ghost" href="#/login">Belépés</a>
-          <a class="btn primary" href="#/register">Regisztráció</a>`}
+          <a class="btn ghost" href="/login">Belépés</a>
+          <a class="btn primary" href="/register">Regisztráció</a>`}
       </div>
     </header>
     <div class="mobile-links">${links}</div>`.__html;
@@ -457,7 +484,6 @@ document.addEventListener('change', async (e) => {
 });
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
-window.addEventListener('hashchange', () => route());
 
 Object.assign(actions, {
   retryWatch: () => refresh(),
@@ -471,7 +497,7 @@ Object.assign(actions, {
   async logout() {
     try { await api('/logout', { method: 'POST' }); } finally { setToken(null); }
     state.user = null; state.sub = null;
-    goTo('#/');
+    goTo('/');
     toast('Sikeresen kijelentkeztél.');
   },
 
@@ -494,7 +520,7 @@ async function setAppearance(theme, accent) {
 
 forms.search = (data) => {
   const q = (data.q || '').trim();
-  if (q) location.hash = '#/search/' + encodeURIComponent(q);
+  if (q) navigate('/search/' + encodeURIComponent(q));
 };
 
 // ==========================================================
@@ -505,14 +531,14 @@ function afterAuth(data) {
   state.user = data.user;
   state.sub = data.subscription;
   applyServerPrefs(data.user);
-  const to = state.returnTo || '#/';
+  const to = state.returnTo || '/';
   state.returnTo = null;
   goTo(to);
   toast(`Szia, ${data.user.name}!`);
 }
 
 function loginPage() {
-  if (state.user) { location.hash = '#/'; return page(loading()); }
+  if (state.user) { navigate('/'); return page(loading()); }
   return page(html`
     <div class="page narrow">
       <div class="card">
@@ -523,7 +549,7 @@ function loginPage() {
           <p class="form-error" role="alert"></p>
           <button class="btn primary lg">Belépés</button>
         </form>
-        <p class="muted center" style="margin:18px 0 0">Még nincs fiókod? <a href="#/register" style="color:var(--accent)">Regisztrálj</a></p>
+        <p class="muted center" style="margin:18px 0 0">Még nincs fiókod? <a href="/register" style="color:var(--accent)">Regisztrálj</a></p>
       </div>
     </div>`);
 }
@@ -534,7 +560,7 @@ forms.login = async (data) => {
 };
 
 function registerPage() {
-  if (state.user) { location.hash = '#/'; return page(loading()); }
+  if (state.user) { navigate('/'); return page(loading()); }
   return page(html`
     <div class="page narrow">
       <div class="card">
@@ -547,14 +573,14 @@ function registerPage() {
           <p class="form-error" role="alert"></p>
           <button class="btn primary lg">Regisztráció</button>
         </form>
-        <p class="muted center" style="margin:18px 0 0">Már van fiókod? <a href="#/login" style="color:var(--accent)">Belépés</a></p>
+        <p class="muted center" style="margin:18px 0 0">Már van fiókod? <a href="/login" style="color:var(--accent)">Belépés</a></p>
       </div>
     </div>`);
 }
 forms.register = async ({ name, email, password, password2 }) => {
   if (password !== password2) throw new Error('A két jelszó nem egyezik.');
   // Regisztráció után a csomagválasztás a természetes következő lépés.
-  if (!state.returnTo) state.returnTo = '#/plans';
+  if (!state.returnTo) state.returnTo = '/plans';
   afterAuth(await api('/register', { method: 'POST', body: { name, email, password } }));
 };
 
@@ -578,7 +604,7 @@ async function homePage() {
     <div class="banner">
       <div><strong>${state.sub ? 'Az előfizetésed lejárt.' : 'Még nincs előfizetésed.'}</strong>
         <div class="muted">Válassz csomagot, és kezdd el nézni a filmeket és sorozatokat.</div></div>
-      <a class="btn primary" href="#/plans">Csomagok megtekintése</a>
+      <a class="btn primary" href="/plans">Csomagok megtekintése</a>
     </div>`;
 
   const favorites = titles.filter((t) => t.fav);
@@ -590,8 +616,8 @@ async function homePage() {
         <h1>${hero.title}</h1>
         <p>${hero.description}</p>
         <div class="row">
-          <a class="btn primary lg" href="${hasAccess() ? `#/watch/${hero.id}` : '#/plans'}">${hasAccess() ? '▶ Lejátszás' : 'Előfizetés a megtekintéshez'}</a>
-          <a class="btn lg" href="#/title/${hero.id}">Részletek</a>
+          <a class="btn primary lg" href="${hasAccess() ? `/watch/${hero.id}` : '/plans'}">${hasAccess() ? '▶ Lejátszás' : 'Előfizetés a megtekintéshez'}</a>
+          <a class="btn lg" href="/title/${hero.id}">Részletek</a>
         </div>
       </div>
     </section>
@@ -613,8 +639,8 @@ async function landingPage() {
         <h1>Filmek és sorozatok, korlátlanul.</h1>
         <p>Nézd, amit szeretsz, bármikor és bárhol. Hozz létre egy fiókot, válassz csomagot, és indulhat a nézés.</p>
         <div class="row" style="justify-content:center">
-          <a class="btn primary lg" href="#/register">Kezdjük el</a>
-          <a class="btn lg" href="#/login">Belépés</a>
+          <a class="btn primary lg" href="/register">Kezdjük el</a>
+          <a class="btn lg" href="/login">Belépés</a>
         </div>
       </div>
     </section>
@@ -627,7 +653,7 @@ async function landingPage() {
 
 async function browsePage({ type, query }) {
   const titles = await api(`/titles${type === 'all' ? '' : `?type=${type}`}`);
-  return page(catalogView(type === 'movie' ? 'Filmek' : type === 'series' ? 'Sorozatok' : 'Minden tartalom', titles, query, `#/browse/${type}`));
+  return page(catalogView(type === 'movie' ? 'Filmek' : type === 'series' ? 'Sorozatok' : 'Minden tartalom', titles, query, `/browse/${type}`));
 }
 
 // Élő keresés: gépelés közben (rövid késleltetéssel) frissül a találati lista.
@@ -674,7 +700,7 @@ async function searchPage({ q }) {
         ? html`<div class="grid-cards">${list.map(tile)}</div>`
         : emptyBox('Nincs a keresésnek megfelelő film vagy sorozat.')).__html;
       const v = input.value.trim();
-      history.replaceState(null, '', v ? `#/search/${encodeURIComponent(v)}` : '#/search');
+      history.replaceState(null, '', v ? `/search/${encodeURIComponent(v)}` : '/search');
     };
     searchRun = run;
     input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 250); });
@@ -716,7 +742,7 @@ async function favoritesPage() {
       <h1 class="page-title">♥ Kedvenceim</h1>
       ${titles.length
         ? html`<div class="grid-cards">${titles.map(tile)}</div>`
-        : html`<div class="empty">Még nincs kedvenc filmed vagy sorozatod.<br>Nyomd meg a ♥ jelet egy borítón, és itt fog megjelenni.<br><br><a class="btn primary" href="#/browse/all">Böngészés</a></div>`}
+        : html`<div class="empty">Még nincs kedvenc filmed vagy sorozatod.<br>Nyomd meg a ♥ jelet egy borítón, és itt fog megjelenni.<br><br><a class="btn primary" href="/browse/all">Böngészés</a></div>`}
     </div>`);
 }
 
@@ -777,7 +803,7 @@ async function titlePage({ id }) {
   const t = await api(`/titles/${id}`);
   const access = hasAccess();
   const first = t.episodes[0];
-  const playHref = t.type === 'movie' ? `#/watch/${t.id}` : first ? `#/watch/${t.id}/${first.id}` : null;
+  const playHref = t.type === 'movie' ? `/watch/${t.id}` : first ? `/watch/${t.id}/${first.id}` : null;
 
   return page(html`
     <div class="page">
@@ -790,15 +816,15 @@ async function titlePage({ id }) {
           <div class="row" style="margin-bottom:28px">
             ${access
               ? (playHref ? html`<a class="btn primary lg" href="${playHref}">▶ Lejátszás</a>` : html`<span class="muted">Ehhez a sorozathoz még nincs epizód.</span>`)
-              : html`<a class="btn primary lg" href="#/plans">Előfizetés a megtekintéshez</a>`}
+              : html`<a class="btn primary lg" href="/plans">Előfizetés a megtekintéshez</a>`}
             <button class="btn lg fav-btn ${t.fav ? 'on' : ''}" data-action="toggleFav" data-id="${t.id}" aria-pressed="${t.fav ? 'true' : 'false'}">${HEART} <span class="fav-label">${t.fav ? 'Kedvenc' : 'Kedvencekhez'}</span></button>
-            <a class="btn lg" href="#/browse/${t.type}">Vissza</a>
+            <a class="btn lg" href="/browse/${t.type}">Vissza</a>
           </div>
           ${t.type === 'series' && t.episodes.length > 0 && html`
             <h2>Epizódok</h2>
             <div class="episode-list">
               ${t.episodes.map((ep) => html`
-                <a class="episode" href="${access ? `#/watch/${t.id}/${ep.id}` : '#/plans'}">
+                <a class="episode" href="${access ? `/watch/${t.id}/${ep.id}` : '/plans'}">
                   <span class="num">${ep.season}×${ep.number}</span>
                   <span>${ep.name}</span>
                   <span class="muted" style="margin-left:auto">${access ? '▶' : '🔒'}</span>
@@ -855,7 +881,7 @@ async function watchPage({ id, ep }) {
           <p>${err.message}</p>
           <div class="row" style="justify-content:center">
             <button class="btn primary" data-action="retryWatch">Újrapróbálom</button>
-            <a class="btn" href="#/plans">Csomagok</a>
+            <a class="btn" href="/plans">Csomagok</a>
           </div>
         </div></div>`);
     }
@@ -864,7 +890,7 @@ async function watchPage({ id, ep }) {
       <div class="page medium"><div class="locked">
         <h1>Előfizetés szükséges</h1>
         <p class="muted">${state.sub ? 'Az előfizetésed lejárt. Új előfizetéssel folytathatod a nézést.' : 'A megtekintéshez válassz egy csomagot.'}</p>
-        <a class="btn primary lg" href="#/plans">Csomagok</a>
+        <a class="btn primary lg" href="/plans">Csomagok</a>
       </div></div>`);
   }
   const eps = data.episodes;
@@ -878,7 +904,7 @@ async function watchPage({ id, ep }) {
           <h1 class="page-title" style="margin:0">${data.title}</h1>
           ${data.episode && html`<div class="muted">${data.episode.season}. évad ${data.episode.number}. rész – ${data.episode.name}</div>`}
         </div>
-        <a class="btn" href="#/title/${id}">← Részletek</a>
+        <a class="btn" href="/title/${id}">← Részletek</a>
       </div>
       <div class="player-wrap ${eps.length ? '' : 'solo'}">
         <div>
@@ -889,12 +915,12 @@ async function watchPage({ id, ep }) {
           <p id="player-error" class="form-error"></p>
           <div class="row between" style="margin-top:10px">
             <span class="quality-tag" title="A csomagod által adott minőség">${data.qualityLabel}</span>
-            ${data.higherQuality && html`<span class="muted" style="font-size:.9rem">Ez a tartalom ${QUALITY_FULL[data.higherQuality]} minőségben is elérhető nagyobb csomaggal. <a href="#/plans" style="color:var(--accent)">Csomagok</a></span>`}
+            ${data.higherQuality && html`<span class="muted" style="font-size:.9rem">Ez a tartalom ${QUALITY_FULL[data.higherQuality]} minőségben is elérhető nagyobb csomaggal. <a href="/plans" style="color:var(--accent)">Csomagok</a></span>`}
           </div>
         </div>
         ${eps.length > 0 && html`
           <aside><h2>Epizódok</h2><div class="episode-list">
-            ${eps.map((e) => html`<a class="episode ${data.episode && e.id === data.episode.id ? 'current' : ''}" href="#/watch/${id}/${e.id}">
+            ${eps.map((e) => html`<a class="episode ${data.episode && e.id === data.episode.id ? 'current' : ''}" href="/watch/${id}/${e.id}">
               <span class="num">${e.season}×${e.number}</span><span>${e.name}</span></a>`)}
           </div></aside>`}
       </div>
@@ -909,7 +935,7 @@ async function watchPage({ id, ep }) {
     });
     if (data.kind === 'embed') return;
     v.addEventListener('error', () => { document.getElementById('player-error').textContent = 'A videó nem tölthető be. Próbáld újra később.'; });
-    if (next) v.addEventListener('ended', () => { location.hash = `#/watch/${id}/${next.id}`; });
+    if (next) v.addEventListener('ended', () => { navigate(`/watch/${id}/${next.id}`); });
   });
 }
 
@@ -925,7 +951,7 @@ function planCard(p, sub) {
   let action;
   if (isCurrent && sub.state === 'active') action = html`<button class="btn" disabled>Jelenlegi csomag</button>`;
   else if (blocked) action = html`<button class="btn" disabled title="Csomagváltáshoz előbb mondd le a jelenlegi előfizetésedet">Előbb mondd le a jelenlegit</button>`;
-  else action = html`<a class="btn primary" href="#/checkout/${p.id}">${isCurrent ? 'Lemondás visszavonása' : valid ? 'Váltás erre' : 'Előfizetés'}</a>`;
+  else action = html`<a class="btn primary" href="/checkout/${p.id}">${isCurrent ? 'Lemondás visszavonása' : valid ? 'Váltás erre' : 'Előfizetés'}</a>`;
 
   return html`
     <div class="card plan ${isCurrent ? 'current' : ''}">
@@ -954,7 +980,7 @@ async function plansPage() {
       <p class="muted center" style="margin-bottom:28px">Válaszd ki a számodra megfelelőt. Bármikor lemondható.</p>
       ${active && html`<div class="banner"><div><strong>Van aktív előfizetésed (${sub.plan_name}).</strong>
         <div class="muted">Másik csomagra váltáshoz előbb mondd le a jelenlegit a Fiók oldalon.</div></div>
-        <a class="btn" href="#/account">Fiók</a></div>`}
+        <a class="btn" href="/account">Fiók</a></div>`}
       ${cancelled && html`<div class="banner"><div><strong>Az előfizetésed le van mondva (${fmtDate(sub.expires_at)}-ig érvényes).</strong>
         <div class="muted">Új csomag választásakor az azonnal indul, a jelenlegi hátralévő napjai elvesznek.</div></div></div>`}
       <div class="plans">${plans.map((p) => planCard(p, state.sub))}</div>
@@ -966,7 +992,7 @@ async function checkoutPage({ id }) {
   const plans = await getPlans(true);
   await refreshMe();
   const plan = plans.find((p) => p.id === Number(id));
-  if (!plan) return page(html`<div class="page center"><h1>A csomag nem található.</h1><a class="btn" href="#/plans">Vissza</a></div>`);
+  if (!plan) return page(html`<div class="page center"><h1>A csomag nem található.</h1><a class="btn" href="/plans">Vissza</a></div>`);
 
   const sub = state.sub;
   const valid = sub && sub.state !== 'expired';
@@ -974,14 +1000,14 @@ async function checkoutPage({ id }) {
   if (state.payments === 'off') {
     return page(html`<div class="page narrow"><div class="card center"><h1>A fizetés még nem elérhető</h1>
       <p class="muted">A bankkártyás fizetés beállítása folyamatban van. Kérjük, nézz vissza később.</p>
-      <a class="btn" href="#/plans">Vissza</a></div></div>`);
+      <a class="btn" href="/plans">Vissza</a></div></div>`);
   }
   // Aktív előfizetés mellett nem lehet másik csomagot venni: előbb le kell mondani
   if (valid && sub.state === 'active') {
     return page(html`<div class="page narrow"><div class="card center"><h1>Van aktív előfizetésed</h1>
       <p>Jelenleg a(z) <strong>${sub.plan_name}</strong> csomagod aktív (${fmtDate(sub.expires_at)}-ig).
         Csomagváltáshoz előbb mondd le, utána választhatsz újat.</p>
-      <div class="row" style="justify-content:center"><a class="btn primary" href="#/account">Lemondás a Fiók oldalon</a><a class="btn" href="#/plans">Vissza</a></div></div></div>`);
+      <div class="row" style="justify-content:center"><a class="btn primary" href="/account">Lemondás a Fiók oldalon</a><a class="btn" href="/plans">Vissza</a></div></div></div>`);
   }
 
   const reactivate = valid && sub.plan_id === plan.id && sub.stripe; // lemondott, de még érvényes azonos csomag
@@ -1004,7 +1030,7 @@ async function checkoutPage({ id }) {
         <form class="form" data-form="checkout" data-plan="${plan.id}">
           <p class="form-error" role="alert"></p>
           <button class="btn primary lg">${reactivate ? 'Lemondás visszavonása' : state.payments === 'demo' ? 'Előfizetés (teszt)' : `Fizetés bankkártyával – ${fmtMoney(plan.price)}`}</button>
-          <a class="btn ghost" href="#/plans">Mégse</a>
+          <a class="btn ghost" href="/plans">Mégse</a>
         </form>
       </div>
     </div>`);
@@ -1015,14 +1041,14 @@ forms.checkout = async (data, form) => {
     const res = await api('/subscription', { method: 'POST', body: { planId } });
     state.sub = res.subscription;
     toast('Az előfizetés sikeresen frissítve.');
-    goTo('#/account');
+    goTo('/account');
     return;
   }
   const res = await api('/checkout', { method: 'POST', body: { planId } });
   if (res.reactivated) {
     state.sub = res.subscription;
     toast('A lemondás visszavonva, az előfizetés újra megújul.');
-    goTo('#/account');
+    goTo('/account');
     return;
   }
   location.href = res.url; // átirányítás a Stripe biztonságos fizetési oldalára
@@ -1034,7 +1060,7 @@ async function paymentReturnPage() {
   const sessionId = new URLSearchParams(location.search).get('checkout_session');
   if (!sessionId) {
     return page(html`<div class="page narrow"><div class="card center"><h1>Nincs fizetési azonosító</h1>
-      <a class="btn" href="#/plans">Csomagok</a></div></div>`);
+      <a class="btn" href="/plans">Csomagok</a></div></div>`);
   }
   let res;
   try {
@@ -1042,25 +1068,25 @@ async function paymentReturnPage() {
   } catch (err) {
     return page(html`<div class="page narrow"><div class="card center"><h1>A fizetés ellenőrzése nem sikerült</h1>
       <p class="muted">${err.message}</p>
-      <div class="row" style="justify-content:center"><button class="btn primary" data-action="retryPayment">Újrapróbálom</button><a class="btn" href="#/account">Fiók</a></div></div></div>`);
+      <div class="row" style="justify-content:center"><button class="btn primary" data-action="retryPayment">Újrapróbálom</button><a class="btn" href="/account">Fiók</a></div></div></div>`);
   }
   if (res.status === 'open') {
-    history.replaceState(null, '', location.pathname + location.hash);
+    history.replaceState(null, '', location.pathname);
     return page(html`<div class="page narrow"><div class="card center"><h1>A fizetés nem fejeződött be</h1>
-      <p class="muted">Nem történt terhelés. Bármikor újra megpróbálhatod.</p><a class="btn primary" href="#/plans">Csomagok</a></div></div>`);
+      <p class="muted">Nem történt terhelés. Bármikor újra megpróbálhatod.</p><a class="btn primary" href="/plans">Csomagok</a></div></div>`);
   }
   if (res.status === 'pending') {
     return page(html`<div class="page narrow"><div class="card center"><h1>A fizetés feldolgozás alatt van</h1>
       <p class="muted">A bank még nem igazolta vissza a fizetést. Ez pár percig is eltarthat, az előfizetésed automatikusan aktív lesz.</p>
-      <div class="row" style="justify-content:center"><button class="btn primary" data-action="retryPayment">Frissítés</button><a class="btn" href="#/">Főoldal</a></div></div></div>`);
+      <div class="row" style="justify-content:center"><button class="btn primary" data-action="retryPayment">Frissítés</button><a class="btn" href="/">Főoldal</a></div></div></div>`);
   }
-  history.replaceState(null, '', location.pathname + location.hash);
+  history.replaceState(null, '', location.pathname);
   state.sub = res.subscription;
   const s = res.subscription;
   return page(html`<div class="page narrow"><div class="card center">
     <h1>Sikeres fizetés! 🎉</h1>
     <p>A(z) <strong>${s ? s.plan_name : ''}</strong> előfizetésed aktív${s ? html`, ${fmtDate(s.expires_at)}-ig, utána automatikusan megújul` : ''}.</p>
-    <div class="row" style="justify-content:center"><a class="btn primary lg" href="#/">Irány a filmek</a><a class="btn" href="#/account">Fiók</a></div>
+    <div class="row" style="justify-content:center"><a class="btn primary lg" href="/">Irány a filmek</a><a class="btn" href="/account">Fiók</a></div>
   </div></div>`);
 }
 actions.retryPayment = () => refresh();
@@ -1077,6 +1103,7 @@ async function accountPage() {
   const accents = [['red', 'Piros'], ['blue', 'Kék'], ['purple', 'Lila'], ['green', 'Zöld'], ['orange', 'Narancs']];
 
   const demo = me.payments === 'demo';
+  const latestInvoice = payments.find((p) => p.invoice_id); // a legutóbbi kifizetéshez tartozó számla
   const subCard = s ? html`
     <div class="row between">
       <div>
@@ -1093,13 +1120,14 @@ async function accountPage() {
           : html`Érvényes eddig: <strong>${fmtDate(s.expires_at)}</strong> (${s.days_left} nap). Lejáratkor nem újul meg automatikusan.`}</p>
     <div class="row">
       ${s.state === 'active' && html`<button class="btn danger" data-action="cancelMine">Lemondás</button>`}
-      ${s.state === 'cancelled' && html`<a class="btn primary" href="#/checkout/${s.plan_id}">${s.stripe ? 'Lemondás visszavonása' : 'Előfizetés újra'}</a><a class="btn" href="#/plans">Másik csomag választása</a>`}
-      ${s.state === 'expired' && html`<a class="btn primary" href="#/plans">Új előfizetés</a>`}
-      ${s.stripe && html`<button class="btn" data-action="openPortal">Számlázás kezelése</button>`}
+      ${s.state === 'cancelled' && html`<a class="btn primary" href="/checkout/${s.plan_id}">${s.stripe ? 'Lemondás visszavonása' : 'Előfizetés újra'}</a><a class="btn" href="/plans">Másik csomag választása</a>`}
+      ${s.state === 'expired' && html`<a class="btn primary" href="/plans">Új előfizetés</a>`}
+      ${latestInvoice && html`<button class="btn" data-action="downloadInvoice" data-id="${latestInvoice.invoice_id}" data-number="${latestInvoice.invoice_number}" title="A legutóbbi kifizetés számlája (${latestInvoice.invoice_number})">📄 Számla letöltése</button>`}
+      ${s.stripe && html`<button class="btn" data-action="openPortal">Fizetési mód és számlák (Stripe)</button>`}
       ${demo && s.state !== 'expired' && html`<button class="btn" data-action="renewMine">Megújítás +30 nap (teszt)</button>`}
     </div>
     ${s.state === 'active' && html`<p class="muted" style="margin:14px 0 0;font-size:.88rem">Másik csomagra váltáshoz előbb mondd le a jelenlegit, utána választhatsz újat.</p>`}`
-    : html`<p class="muted">Még nincs előfizetésed.</p><a class="btn primary" href="#/plans">Csomag választása</a>`;
+    : html`<p class="muted">Még nincs előfizetésed.</p><a class="btn primary" href="/plans">Csomag választása</a>`;
 
   return page(html`
     <div class="page medium">
@@ -1147,8 +1175,11 @@ async function accountPage() {
         <h2>Fizetési előzmények</h2>
         ${payments.length ? html`
           <div class="table-wrap"><table>
-            <thead><tr><th>Dátum</th><th>Csomag</th><th>Típus</th><th>Összeg</th></tr></thead>
-            <tbody>${payments.map((p) => html`<tr><td>${fmtDateShort(p.created_at)}</td><td>${p.plan_name}</td><td>${PAY_KIND[p.kind] || p.kind}</td><td>${fmtMoney(p.amount)}</td></tr>`)}</tbody>
+            <thead><tr><th>Dátum</th><th>Csomag</th><th>Típus</th><th>Összeg</th><th>Számla</th></tr></thead>
+            <tbody>${payments.map((p) => html`<tr><td>${fmtDateShort(p.created_at)}</td><td>${p.plan_name}</td><td>${PAY_KIND[p.kind] || p.kind}</td><td>${fmtMoney(p.amount)}</td>
+              <td>${p.invoice_id
+                ? html`<button class="btn sm" data-action="downloadInvoice" data-id="${p.invoice_id}" data-number="${p.invoice_number}">📄 ${p.invoice_number}</button>`
+                : html`<span class="muted">–</span>`}</td></tr>`)}</tbody>
           </table></div>` : emptyBox('Még nincs fizetés.')}
       </div>
     </div>`);
@@ -1165,7 +1196,26 @@ forms.password = async (data, form) => {
   form.reset();
   toast('A jelszó megváltozott.');
 };
+// A számla PDF letöltése. A kérés a bejelentkezéssel (süti vagy token) megy, ezért fetch + blob, nem sima link.
+async function downloadInvoice(id, number) {
+  const res = await fetch(`${API_BASE}/api/invoices/${id}/pdf`, { credentials: CROSS_ORIGIN ? 'omit' : 'same-origin', headers: authHeaders() });
+  if (!res.ok) {
+    let message = 'A számla letöltése nem sikerült.';
+    try { message = (await res.json()).error || message; } catch { /* nem JSON */ }
+    throw new Error(message);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${number || 'szamla'}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 Object.assign(actions, {
+  downloadInvoice: (el) => downloadInvoice(el.dataset.id, el.dataset.number),
   async openPortal() {
     const res = await api('/billing/portal', { method: 'POST' });
     location.href = res.url; // a Stripe számlázási portál (kártya módosítása, számlák)
@@ -1189,20 +1239,20 @@ Object.assign(actions, {
 //  Admin panel
 // ==========================================================
 
-const adminTabs = [['overview', 'Áttekintés'], ['users', 'Felhasználók'], ['subs', 'Előfizetések'], ['plans', 'Csomagok'], ['content', 'Tartalmak'], ['recs', 'Ajánlások']];
-const A = { users: [], subs: [], plans: [], titles: [], recs: [], userQ: '', subQ: '', subState: '', recState: '' };
+const adminTabs = [['overview', 'Áttekintés'], ['users', 'Felhasználók'], ['subs', 'Előfizetések'], ['invoices', 'Számlák'], ['plans', 'Csomagok'], ['content', 'Tartalmak'], ['recs', 'Ajánlások']];
+const A = { users: [], subs: [], plans: [], titles: [], recs: [], invoices: [], userQ: '', subQ: '', subState: '', recState: '', invQ: '' };
 const findBy = (list, id) => list.find((x) => x.id === Number(id));
 
 async function adminPage({ tab }) {
   tab = adminTabs.some(([k]) => k === tab) ? tab : 'overview';
   const stats = await api('/admin/stats');
   state.newRecs = stats.newRecommendations;
-  const body = await ({ overview: () => adminOverview(stats), users: adminUsers, subs: adminSubs, plans: adminPlans, content: adminContent, recs: adminRecs })[tab]();
+  const body = await ({ overview: () => adminOverview(stats), users: adminUsers, subs: adminSubs, invoices: adminInvoices, plans: adminPlans, content: adminContent, recs: adminRecs })[tab]();
   return page(html`
     <div class="page">
       <h1 class="page-title">Admin panel</h1>
       <nav class="tabs" aria-label="Admin fülek">
-        ${adminTabs.map(([k, l]) => html`<a href="#/admin/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'recs' && stats.newRecommendations > 0 && html` <span class="count-badge">${stats.newRecommendations}</span>`}</a>`)}
+        ${adminTabs.map(([k, l]) => html`<a href="/admin/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'recs' && stats.newRecommendations > 0 && html` <span class="count-badge">${stats.newRecommendations}</span>`}</a>`)}
       </nav>
       ${body}
     </div>`);
@@ -1215,6 +1265,7 @@ async function adminOverview(s) {
   const tlsDays = s.tlsExpiresAt ? Math.ceil((s.tlsExpiresAt - Date.now()) / 86_400_000) : null;
   const payBanner = (kind, title, text) => html`<div class="banner" role="${kind === 'bad' ? 'alert' : 'status'}"><div><strong>${title}</strong><div class="muted">${text}</div></div></div>`;
   return html`
+    ${!s.invoiceConfigured && payBanner('warn', 'A számlázási adatok hiányosak.', 'A számlákon nem szerepel az eladó neve, címe és adószáma. Add meg a SELLER_NAME, SELLER_ADDRESS és SELLER_TAX_ID értékét a szerver .env fájljában (lásd STRIPE.md).')}
     ${s.payments === 'off' && payBanner('bad', 'A bankkártyás fizetés nincs beállítva.', 'A felhasználók most nem tudnak előfizetni. Add meg a STRIPE_SECRET_KEY értékét a szerver .env fájljában (lásd STRIPE.md).')}
     ${s.payments === 'demo' && payBanner('bad', 'FIGYELEM: a DEMO_PAYMENTS be van kapcsolva.', 'Bárki ingyen előfizethet! Ez csak tesztelésre való, éles oldalon kapcsold ki.')}
     ${s.payments === 'stripe' && s.stripeMode === 'test' && payBanner('warn', 'Stripe TESZT mód.', 'A fizetések nem valódiak (teszt kártyák). Éles működéshez sk_live_ kulcs kell.')}
@@ -1223,7 +1274,7 @@ async function adminOverview(s) {
       <div><strong>${tlsDays > 0 ? `A HTTPS tanúsítvány ${tlsDays} nap múlva lejár.` : 'A HTTPS tanúsítvány lejárt!'}</strong>
         <div class="muted">Futtasd újra a <code>tools/get-cert/get-cert.bat</code> fájlt a gépeden, és töltsd fel az új <code>tls</code> mappát a szerverre. Újraindítás nem kell.</div></div>
     </div>`}
-    ${s.newRecommendations > 0 && html`<div class="banner"><div><strong>${s.newRecommendations} új ajánlás</strong> vár elbírálásra a felhasználóktól.</div><a class="btn primary" href="#/admin/recs">Megnézem</a></div>`}
+    ${s.newRecommendations > 0 && html`<div class="banner"><div><strong>${s.newRecommendations} új ajánlás</strong> vár elbírálásra a felhasználóktól.</div><a class="btn primary" href="/admin/recs">Megnézem</a></div>`}
     <div class="stats">
       ${stat('Felhasználók', s.users, `+${s.newUsers} az elmúlt 7 napban`)}
       ${stat('Aktív előfizetések', s.activeSubs, `${s.cancelledSubs} lemondva (még érvényes)`)}
@@ -1579,6 +1630,32 @@ function videoLabel(url) {
   } catch { return 'Link'; }
 }
 
+// ----- Számlák (könyveléshez) -----
+
+async function adminInvoices() {
+  A.invoices = await api(`/admin/invoices?q=${encodeURIComponent(A.invQ)}`);
+  const total = A.invoices.reduce((sum, i) => sum + i.gross, 0);
+  return html`
+    <form class="toolbar" data-form="adminInvSearch">
+      <input class="grow" name="q" value="${A.invQ}" placeholder="Keresés sorszám, vevő neve vagy e-mail címe alapján…">
+      <button class="btn">Keresés</button>
+    </form>
+    ${A.invoices.length ? html`<p class="muted">${A.invoices.length} számla, összesen ${fmtMoney(total)}</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Sorszám</th><th>Kelt</th><th>Vevő</th><th>Tétel</th><th>Nettó</th><th>ÁFA</th><th>Bruttó</th><th></th></tr></thead>
+      <tbody>${A.invoices.map((i) => html`<tr>
+        <td><strong>${i.number}</strong></td>
+        <td>${fmtDateShort(i.issued_at)}</td>
+        <td>${i.buyer_name}<br><span class="muted">${i.buyer_email}</span></td>
+        <td>${i.description}<br><span class="muted">${i.period_start && i.period_end ? `${fmtDateShort(i.period_start)} – ${fmtDateShort(i.period_end)}` : ''}</span></td>
+        <td>${fmtMoney(i.net)}</td>
+        <td>${i.vat_rate === 0 ? 'AAM' : `${fmtMoney(i.vat)} (${i.vat_rate}%)`}</td>
+        <td><strong>${fmtMoney(i.gross)}</strong></td>
+        <td class="actions"><button class="btn sm" data-action="downloadInvoice" data-id="${i.id}" data-number="${i.number}">PDF</button></td>
+      </tr>`)}</tbody></table></div>` : emptyBox('Még nincs kiállított számla.')}`;
+}
+forms.adminInvSearch = (d) => { A.invQ = (d.q || '').trim(); return refresh(); };
+
 // ----- Ajánlások (felhasználóktól) -----
 
 async function adminRecs() {
@@ -1645,6 +1722,7 @@ if ('serviceWorker' in navigator) {
 if (window.caches) caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
 
 (async function boot() {
+  migrateLegacyHash(); // régi #/ címek átalakítása, mielőtt az útvonalat kiolvassuk
   try { await refreshMe(); applyServerPrefs(state.user); } catch { /* offline: vendégként indul */ }
   await route();
 })();

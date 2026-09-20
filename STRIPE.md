@@ -60,8 +60,9 @@ Stripe irányítópult → **Beállítások → Billing → Ügyfélportál** �
 számlák megtekintését. Teszt és éles módban külön kell beállítani.
 
 ### 5. Feltöltés a szerverre
-A következő fájlokat töltsd fel: `server.js`, `db.js`, `billing.js` (új), `package.json`, `package-lock.json`, `public/` és a `.env`
-(a fentiekkel bővítve). A Pterodactyl induláskor lefuttatja az `npm install`-t, így a `stripe` csomag magától telepszik.
+A következő fájlokat töltsd fel: `server.js`, `db.js`, `billing.js`, `invoices.js` (új), `invoice-pdf.js` (új), a **`fonts/` mappa**
+(új: a számla PDF-jéhez kell, a magyar ékezetek miatt), `package.json`, `package-lock.json`, `public/` és a `.env` (a fentiekkel és a
+`SELLER_*` számlázási adatokkal bővítve). A Pterodactyl induláskor lefuttatja az `npm install`-t, így a `stripe` csomag magától telepszik.
 Az adatbázis (`data/`) a következő indításkor **magától átalakul**, a meglévő adataid megmaradnak.
 
 ## Kipróbálás teszt módban
@@ -98,11 +99,32 @@ A korábbi, ingyenes (demó) vagy az admin által adott előfizetések a lejára
 - **Felhasználó törlésekor** a Stripe előfizetése is megszűnik. Ha ez nem sikerül, a fiók nem törlődik (különben a számlázás folytatódna).
 - Az admin által adott ("ingyen") előfizetés továbbra is működik, és külön jelölve van a listában.
 
+## Számlák
+
+Minden kifizetett előfizetési díjról (első fizetés és minden automatikus megújulás) **sorszámozott számla-PDF** készül, amit a
+felhasználó a Fiók oldalon tölthet le (az előfizetés melletti **„Számla letöltése”** gombbal, és a fizetési előzményekben a
+sorok mellett). Nem kell e-mailt küldeni.
+
+- **Sorszám:** `IMPIX-2026-000001`, évente újraindul, folyamatos, hézag nélkül.
+- **Vevő:** a Stripe fizetési oldalán megadott számlázási név és cím (a Stripe kötelezően bekéri).
+- **Eladó:** a `.env` fájl `SELLER_*` értékeiből (név, cím, adószám, e-mail, ÁFA kulcs); kiállításkor a számla **pillanatképként
+  tárolja**, ezért utólag sem változik, ha később módosítod az adataidat.
+- **ÁFA:** a bruttó (a vevő által fizetett) árból számolva, alapértelmezetten 27%. Alanyi adómentesség esetén `SELLER_VAT_RATE=0`.
+- **Megőrzés:** a számlák a felhasználó törlése után is megmaradnak az adatbázisban (a számlákat jogszabály szerint meg kell őrizni).
+- **Admin:** az admin panel **Számlák** fülén minden számla látható és letölthető (könyveléshez), kereshető sorszám vagy vevő szerint.
+- **Ingyenes tételek** (admin által adott előfizetés) után nem készül számla.
+- Ha a `SELLER_*` adatok hiányoznak, az admin panelen figyelmeztetés jelenik meg, a számlán pedig „Az eladó adatai nincsenek megadva”.
+
+> **FONTOS, ez nem jogi tanács.** Az Impix számla-jellegű PDF-et állít elő a tranzakcióról. Hogy ez **megfelel-e a magyar számlázási
+> szabályoknak**, az az eladó adózási helyzetétől függ: pl. a **NAV online számla adatszolgáltatás** (a számlát a kiállításkor be kell
+> jelenteni a NAV-nak), a számlázóprogramra vonatkozó előírások, az ÁFA kezelése, az elektronikus számla elfogadtatása a vevővel.
+> Ezt egyeztesd a **könyvelőddel**. Ha kell, a számlát egy erre jogosult számlázóprogramnak (pl. Számlázz.hu, Billingo) kell kiállítania
+> az API-jukon keresztül. A jelenlegi megoldás ilyen bekötés nélkül **nem helyettesíti** a hivatalos számlázást.
+
 ## Jogi és pénzügyi tudnivalók (ez nem jogi tanács)
 
 Bankkártyás értékesítés előtt érdemes tisztázni: általános szerződési feltételek (ÁSZF), adatkezelési tájékoztató, a fogyasztót
-megillető elállási jog digitális szolgáltatásnál, valamint a számlázás (a Stripe nyugtát/számlát küld, de a magyar
-adózás szerinti számla kiállítása külön számlázóprogramot igényelhet). Ezekben kérdezd meg a könyvelődet vagy egy jogászt.
+megillető elállási jog digitális szolgáltatásnál, valamint az adózás. Ezekben kérdezd meg a könyvelődet vagy egy jogászt.
 
 ## Fejlesztéshez
 
