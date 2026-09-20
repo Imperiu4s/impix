@@ -96,6 +96,13 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
   (a szerver kényszeríti ki: a magasabb minőségű videólink ki sem megy, és az egyidejű lejátszások számát is számolja)
 - Katalógus (filmek, sorozatok, keresés, műfajszűrés), lejátszó, sorozatoknál automatikus következő epizód
 - A videó csak érvényes előfizetéssel érhető el (a szerver adja ki a címet, a katalógus nem tartalmazza)
+- **Lejárt előfizetés**: a lejárat pillanatában a felhasználó kikerül a tartalmi oldalakról (lejátszó, katalógus, kedvencek), és a
+  Csomagok oldalra kerül; új csomag vásárlásáig csak a Csomagok és a Fiók érhető el. A szerver is megtagadja a kiszolgálást (402),
+  tehát ez nem csak megjelenítés. A Stripe-os előfizetésnél a lejáratkor a szerver azonnal rákérdez a Stripe-ra, hátha épp megújult.
+- **Automatikus megújulás figyelmeztetés**: aktív, kártyás előfizetésnél a Fiók oldalon kiemelt tájékoztatás jelzi, hogy az előfizetés
+  a lejáratkor megújul és levonják a díjat, ha nem mondja le
+- **Lapozható sávok**: a főoldali sávok nyilakkal, elhalványuló szélekkel, haladásjelzővel lapozhatók és egérrel húzhatók (nincs görgetősáv)
+- **Animációk**: oldalváltás, beperegő borítók, szívverés a kedvencnél, csillanó borítók, lebegő hero; a `prefers-reduced-motion` beállítást tiszteletben tartja
 - Téma: sötét / világos / automatikus + 5 kiemelő szín; a fiókhoz mentődik
 - **Keresés**: élő keresőoldal (cím, műfaj, év, leírás), szűrés típusra és műfajra
 - **Kedvencek**: a ♥ gombbal bármelyik film/sorozat a kedvencekbe tehető (külön oldal + sáv a főoldalon)

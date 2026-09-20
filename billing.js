@@ -243,12 +243,15 @@ export function applyStripeSubscription(sub, hint = {}) {
 }
 
 // Időnként újralekérdezi a felhasználó Stripe előfizetését (megújulás, külső lemondás, sikertelen fizetés).
-export async function syncUser(userId, { force = false } = {}) {
+// minAge: a TTL-t figyelmen kívül hagyja, de ennyi ms-on belüli friss szinkront nem ismétel (a lejárat pillanatában használjuk)
+export async function syncUser(userId, { force = false, minAge = 0 } = {}) {
   if (!stripe) return;
   const row = db.prepare('SELECT * FROM subscriptions WHERE user_id = ?').get(userId);
   if (!isStripeManaged(row)) return;
   const t = now();
-  if (!force) {
+  if (minAge) {
+    if (t - (row.stripe_synced_at || 0) < minAge) return;
+  } else if (!force) {
     if (row.expires_at < t - 14 * DAY) return; // régen lejárt, nincs mit frissíteni
     const ttl = row.expires_at - t > 3 * DAY ? 15 * 60_000 : 2 * 60_000; // lejárat közelében gyakrabban
     if (t - (row.stripe_synced_at || 0) < ttl) return;

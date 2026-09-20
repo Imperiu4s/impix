@@ -447,12 +447,15 @@ const DEMO_PAYMENTS = process.env.DEMO_PAYMENTS === '1';
 const paymentsMode = () => (billing.enabled ? 'stripe' : DEMO_PAYMENTS ? 'demo' : 'off');
 
 app.get('/api/me', async (req, res) => {
-  if (!req.user) return res.json({ user: null, subscription: null, payments: paymentsMode() });
-  await billing.syncUser(req.user.id); // megújulás, lemondás a Stripe-ban, sikertelen fizetés
+  if (!req.user) return res.json({ user: null, subscription: null, payments: paymentsMode(), serverTime: Date.now() });
+  // megújulás, lemondás a Stripe-ban, sikertelen fizetés; ?sync=1: a lejárat pillanatában azonnali ellenőrzés
+  await billing.syncUser(req.user.id, req.query.sync === '1' ? { minAge: 10_000 } : {});
   res.json({
     user: publicUser(req.user),
     subscription: subView(getSub(req.user.id)),
     payments: paymentsMode(),
+    serverTime: Date.now(), // a kliens ebből számolja az óra eltérését, hogy pontosan a lejáratkor léptesse ki
+
     newRecommendations: req.user.role === 'admin' ? newRecommendationCount() : 0,
   });
 });
@@ -607,7 +610,15 @@ const TITLE_PUBLIC = `t.id, t.type, t.title, t.description, t.year, t.genre, t.a
           FROM episodes e WHERE e.title_id = t.id) END AS best_quality,
   (SELECT COUNT(*) FROM favorites f WHERE f.title_id = t.id AND f.user_id = ?) AS fav`;
 
-app.get('/api/titles', requireAuth, (req, res) => {
+// A katalógus (címek, kedvencek) csak érvényes előfizetéssel látható; lejárt előfizetésnél 402, és új csomagot kell venni.
+function requireAccess(req, res, next) {
+  requireAuth(req, res, () => {
+    if (!hasAccess(req.user)) return res.status(402).json({ error: 'Az előfizetésed lejárt vagy nincs előfizetésed. Válassz csomagot a folytatáshoz.' });
+    next();
+  });
+}
+
+app.get('/api/titles', requireAccess, (req, res) => {
   const { type, q, genre } = req.query;
   const where = [];
   const args = [req.user.id];
@@ -621,7 +632,7 @@ app.get('/api/titles', requireAuth, (req, res) => {
   res.json(db.prepare(`SELECT ${TITLE_PUBLIC} FROM titles t ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY t.created_at DESC, t.id DESC`).all(...args));
 });
 
-app.get('/api/titles/:id', requireAuth, (req, res) => {
+app.get('/api/titles/:id', requireAccess, (req, res) => {
   const title = db.prepare(`SELECT ${TITLE_PUBLIC} FROM titles t WHERE t.id = ?`).get(req.user.id, Number(req.params.id));
   if (!title) fail('A tartalom nem található.', 404);
   const episodes = db.prepare('SELECT id, season, number, name FROM episodes WHERE title_id = ? ORDER BY season, number').all(title.id);
@@ -701,13 +712,13 @@ app.get('/media/:file', (req, res) => {
 
 // ---------- Kedvencek ----------
 
-app.get('/api/favorites', requireAuth, (req, res) => {
+app.get('/api/favorites', requireAccess, (req, res) => {
   res.json(db.prepare(`
     SELECT ${TITLE_PUBLIC} FROM favorites fv JOIN titles t ON t.id = fv.title_id
     WHERE fv.user_id = ? ORDER BY fv.created_at DESC`).all(req.user.id, req.user.id));
 });
 
-app.put('/api/favorites/:id', requireAuth, (req, res) => {
+app.put('/api/favorites/:id', requireAccess, (req, res) => {
   const id = Number(req.params.id);
   if (!db.prepare('SELECT 1 FROM titles WHERE id = ?').get(id)) fail('A tartalom nem található.', 404);
   db.prepare('INSERT OR IGNORE INTO favorites (user_id, title_id, created_at) VALUES (?,?,?)').run(req.user.id, id, Date.now());

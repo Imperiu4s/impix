@@ -10,7 +10,8 @@ const $modal = document.getElementById('modal-root');
 const $toasts = document.getElementById('toasts');
 
 // payments: 'stripe' (kártyás fizetés), 'demo' (ingyenes teszt), 'off' (nincs beállítva)
-const state = { user: null, sub: null, plans: null, returnTo: null, newRecs: 0, payments: 'off' };
+// skew: a szerver és a böngésző órájának eltérése (ms), hogy az előfizetés pontosan a szerver szerinti lejáratkor érjen véget
+const state = { user: null, sub: null, plans: null, returnTo: null, newRecs: 0, payments: 'off', skew: 0 };
 
 // ---------- Sablonkezelés: minden érték alapból escape-elt ----------
 
@@ -75,7 +76,10 @@ const PAY_KIND = {
 const QUALITY_NAME = { 720: 'HD', 1080: 'Full HD', 2160: '4K' };
 const QUALITY_FULL = { 720: 'HD (720p)', 1080: 'Full HD (1080p)', 2160: 'Ultra HD (4K)' };
 
-const hasAccess = () => !!state.user && (state.user.role === 'admin' || (!!state.sub && state.sub.state !== 'expired'));
+const serverNow = () => Date.now() + state.skew;
+const hasAccess = () => !!state.user && (state.user.role === 'admin' || (!!state.sub && state.sub.state !== 'expired' && state.sub.expires_at > serverNow()));
+// Tartalmi (előfizetőknek szóló) oldalak: lejárt előfizetéssel nem érhetők el, csak a Csomagok és a Fiók
+const isCatalogPath = (p) => p === '/' || /^\/(browse|search|favorites|title|watch)(\/|$)/.test(p);
 const page = (view, mounted) => ({ html: view, mounted });
 
 function toast(message, type = 'ok') {
@@ -86,14 +90,54 @@ function toast(message, type = 'ok') {
   setTimeout(() => el.remove(), 4200);
 }
 
-async function refreshMe() {
-  const d = await api('/me');
+// sync: a lejárat pillanatában a szerver a Stripe-tól is rákérdez (hátha épp megújult az előfizetés)
+async function refreshMe(sync = false) {
+  const d = await api(sync ? '/me?sync=1' : '/me');
   state.user = d.user;
   state.sub = d.subscription;
   state.newRecs = d.newRecommendations || 0;
   state.payments = d.payments || 'off';
+  if (d.serverTime) state.skew = d.serverTime - Date.now();
+  scheduleExpiry();
   return d;
 }
+
+// ---------- Lejáró előfizetés ----------
+// Amint lejár az előfizetés, a felhasználót kidobjuk a tartalmi oldalakról (lejátszó, katalógus), és új csomagot kell vennie.
+// A szerver is megtagadja a kiszolgálást (402), ez a kliensoldali rész csak azonnalivá teszi.
+
+let expiryTimer = null;
+const MAX_TIMEOUT = 2_000_000_000; // ~23 nap, a setTimeout felső határa alatt
+
+function scheduleExpiry() {
+  clearTimeout(expiryTimer);
+  const s = state.sub;
+  if (!state.user || state.user.role === 'admin' || !s || s.state === 'expired') return;
+  const wait = s.expires_at - serverNow() + 300;
+  expiryTimer = setTimeout(wait > MAX_TIMEOUT ? scheduleExpiry : onExpiry, Math.max(0, Math.min(wait, MAX_TIMEOUT)));
+}
+
+async function onExpiry() {
+  try { await refreshMe(true); } catch { return; } // hálózati hiba: a következő kérésnél a szerver úgyis 402-t ad
+  if (!state.user || hasAccess()) return renderNav(); // megújult
+  renderNav();
+  if (isCatalogPath(currentRoute().path)) kickToPlans('Lejárt az előfizetésed. Új csomag vásárlásával folytathatod a nézést.');
+  else if (['/account', '/plans'].includes(currentRoute().path)) refresh();
+}
+
+// A lejárt előfizetésű felhasználó a Csomagok oldalra kerül
+function kickToPlans(message) {
+  stopWatching();
+  closeModal(true);
+  if (message) toast(message, 'error');
+  navigate('/plans', { replace: true });
+}
+
+// A háttérben töltött fülben az időzítő késhet: visszatéréskor azonnal ellenőrzünk
+document.addEventListener('visibilitychange', () => {
+  const s = state.sub;
+  if (!document.hidden && state.user && state.user.role !== 'admin' && s && s.state !== 'expired' && s.expires_at <= serverNow()) onExpiry();
+});
 async function getPlans(force) {
   if (!state.plans || force) state.plans = await api('/plans');
   return state.plans;
@@ -111,15 +155,16 @@ const poster = (t) => html`
     <strong>${t.title}</strong>
   </div>`;
 
-const HEART = raw('<svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 2.7 5 6 5c2 0 3.4 1 4.2 2.3h.1C11.1 6 12.5 5 14.500 5c3.300 0 5.100 3.400 3.600 6.800C19.500 16.400 12 21 12 21z"/></svg>');
+const HEART = raw('<svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>');
 
 const favButton = (t, cls = '') => html`
   <button class="fav-btn ${cls} ${t.fav ? 'on' : ''}" data-action="toggleFav" data-id="${t.id}"
     aria-pressed="${t.fav ? 'true' : 'false'}" aria-label="Kedvencekhez adás" title="${t.fav ? 'Eltávolítás a kedvencekből' : 'Kedvencekhez adás'}">${HEART}</button>`;
 
-const tile = (t) => html`
-  <div class="tile-wrap">
-    <a class="tile" href="/title/${t.id}" aria-label="${t.title}">
+// i: a sorszám, ebből lesz a belépő animáció késleltetése (egymás után "peregnek be" a borítók)
+const tile = (t, i = 0) => html`
+  <div class="tile-wrap" style="--i:${Math.min(Number(i) || 0, 14)}">
+    <a class="tile" href="/title/${t.id}" aria-label="${t.title}" draggable="false">
       ${poster(t)}
       <div class="tile-meta">${t.year} · ${t.genre} · ${ageLabel(t.age)}</div>
     </a>
@@ -127,6 +172,80 @@ const tile = (t) => html`
   </div>`;
 
 const ageLabel = (a) => (a === 0 ? 'Korhatár nélkül' : `${a}+`);
+
+// ---------- Lapozható sáv (görgetősáv helyett) ----------
+// Nyilak, a szélén elhalványuló tartalom, haladásjelző vonal, egérrel húzható; érintőképernyőn ujjal lapozható.
+
+const rail = (name, list) => list.length ? html`
+  <section class="rail" data-rail>
+    <div class="rail-head">
+      <h2>${name}</h2>
+      <span class="rail-count">${list.length} cím</span>
+      <span class="rail-progress" aria-hidden="true"><i></i></span>
+    </div>
+    <div class="rail-viewport">
+      <button class="rail-arrow prev" data-action="railPrev" aria-label="Előző">‹</button>
+      <div class="rail-track">${list.map(tile)}</div>
+      <button class="rail-arrow next" data-action="railNext" aria-label="Következő">›</button>
+    </div>
+  </section>` : '';
+
+function updateRail(rail) {
+  const track = rail.querySelector('.rail-track');
+  const max = track.scrollWidth - track.clientWidth;
+  const pos = track.scrollLeft;
+  rail.classList.toggle('at-start', pos <= 2);
+  rail.classList.toggle('at-end', pos >= max - 2);
+  rail.classList.toggle('no-scroll', max <= 2);
+  const bar = rail.querySelector('.rail-progress i');
+  if (bar) {
+    const visible = track.scrollWidth ? track.clientWidth / track.scrollWidth : 1;
+    bar.style.width = `${Math.max(12, Math.min(100, visible * 100))}%`;
+    bar.style.transform = `translateX(${max > 0 ? (pos / max) * (100 / Math.max(visible, .01) - 100) : 0}%)`;
+  }
+}
+
+// Húzás egérrel (érintőképernyőn a böngésző maga görget). A figyelők egyszer, az oldalon globálisan vannak.
+let railDrag = null;
+document.addEventListener('pointerdown', (e) => {
+  const track = e.target.closest && e.target.closest('.rail-track');
+  if (!track || e.pointerType !== 'mouse' || e.button !== 0) return;
+  railDrag = { track, x: e.clientX, left: track.scrollLeft, moved: false };
+});
+window.addEventListener('pointermove', (e) => {
+  if (!railDrag) return;
+  const dx = e.clientX - railDrag.x;
+  if (!railDrag.moved && Math.abs(dx) < 6) return;
+  railDrag.moved = true;
+  railDrag.track.classList.add('dragging');
+  railDrag.track.scrollLeft = railDrag.left - dx;
+});
+window.addEventListener('pointerup', () => {
+  if (!railDrag) return;
+  const { track, moved } = railDrag;
+  railDrag = null;
+  track.classList.remove('dragging');
+  if (moved) { // a húzás végén ne nyíljon meg a borító, amin az egér elengedődött
+    const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+    track.addEventListener('click', stop, { capture: true, once: true });
+    setTimeout(() => track.removeEventListener('click', stop, { capture: true }), 0);
+  }
+});
+window.addEventListener('resize', () => document.querySelectorAll('[data-rail]').forEach(updateRail));
+
+function initRails() {
+  document.querySelectorAll('[data-rail]').forEach((rail) => {
+    const track = rail.querySelector('.rail-track');
+    track.addEventListener('scroll', () => requestAnimationFrame(() => updateRail(rail)), { passive: true });
+    track.addEventListener('dragstart', (e) => e.preventDefault());
+    updateRail(rail);
+  });
+}
+
+function pageRail(el, dir) {
+  const track = el.closest('[data-rail]').querySelector('.rail-track');
+  track.scrollBy({ left: dir * Math.max(240, track.clientWidth * .85), behavior: 'smooth' });
+}
 
 const titleMeta = (t) => html`
   <div class="meta">
@@ -215,6 +334,18 @@ async function route(keepScroll = false) {
   if (guard && !state.user) { state.returnTo = location.pathname + location.search; navigate('/login'); return; }
   if (guard === 'admin' && state.user.role !== 'admin') { navigate('/'); return; }
 
+  // Lejárt (vagy nem is volt) előfizetéssel a tartalmi oldalak nem nyithatók meg, csak a Csomagok és a Fiók
+  if (state.user && isCatalogPath(path)) {
+    const s = state.sub;
+    if (s && s.state !== 'expired' && s.expires_at <= serverNow()) { try { await refreshMe(true); } catch { /* a szerver úgyis dönt */ } }
+    if (my !== navId) return;
+    if (!hasAccess()) {
+      stopWatching();
+      navigate('/plans', { replace: true });
+      return;
+    }
+  }
+
   if (!path.startsWith('/watch/')) stopWatching(); // a lejátszó oldalról kilépve felszabadul a képernyő
   renderNav();
   if (path !== lastPath) $app.innerHTML = loading().__html;
@@ -222,8 +353,11 @@ async function route(keepScroll = false) {
   try {
     const result = handler ? await handler(params) : page(html`<div class="page center"><h1>404</h1><p class="muted">Ez az oldal nem található.</p><a class="btn" href="/">Vissza a főoldalra</a></div>`);
     if (my !== navId) return;
+    $app.dataset.anim = keepScroll || path === lastPath ? 'off' : 'on'; // belépő animáció csak oldalváltáskor, frissítéskor nem
     $app.innerHTML = result.html.__html;
     if (result.mounted) result.mounted();
+    // A belépő animáció a betöltés után kikapcsol, hogy a később (pl. keresésnél) beillesztett elemek ne animálódjanak újra
+    if ($app.dataset.anim === 'on') setTimeout(() => { if (my === navId) $app.dataset.anim = 'off'; }, 1500);
     if (state.user && state.user.role === 'admin') renderNav(); // az ajánlás-jelvény frissítése
   } catch (err) {
     if (my !== navId) return;
@@ -232,6 +366,10 @@ async function route(keepScroll = false) {
       state.returnTo = location.pathname + location.search;
       navigate('/login');
       return;
+    }
+    if (err.status === 402 && isCatalogPath(path)) { // a szerver szerint lejárt az előfizetés
+      try { await refreshMe(true); } catch { /* nem baj */ }
+      if (!hasAccess()) { kickToPlans('Lejárt az előfizetésed. Új csomag vásárlásával folytathatod a nézést.'); return; }
     }
     $app.innerHTML = html`<div class="page center"><h1>Hoppá!</h1><p class="muted">${err.message}</p><a class="btn" href="/">Főoldal</a></div>`.__html;
   }
@@ -254,23 +392,24 @@ function renderNav() {
   const { path } = currentRoute();
   const u = state.user;
   const link = (href, label) => html`<a href="${href}" class="${(href === '/' ? path === '/' : path.startsWith(href)) ? 'active' : ''}">${label}</a>`;
+  const member = hasAccess(); // előfizetés nélkül csak a Csomagok és a Fiók érhető el
   const links = html`
-    ${u && link('/', 'Főoldal')}
-    ${u && link('/browse/movie', 'Filmek')}
-    ${u && link('/browse/series', 'Sorozatok')}
-    ${u && link('/search', 'Keresés')}
-    ${u && link('/favorites', 'Kedvencek')}
-    ${u && link('/recommend', 'Ajánlás')}
+    ${member && link('/', 'Főoldal')}
+    ${member && link('/browse/movie', 'Filmek')}
+    ${member && link('/browse/series', 'Sorozatok')}
+    ${member && link('/search', 'Keresés')}
+    ${member && link('/favorites', 'Kedvencek')}
+    ${member && link('/recommend', 'Ajánlás')}
     ${link('/plans', 'Csomagok')}
     ${u && u.role === 'admin' && link('/admin', html`Admin${state.newRecs > 0 && html` <span class="count-badge" title="Új ajánlások">${state.newRecs}</span>`}`)}`;
   const dark = ImpixTheme.effective === 'dark';
 
   $nav.innerHTML = html`
     <header class="nav">
-      <a class="logo" href="/" aria-label="Impix főoldal">IMPIX</a>
+      <a class="logo" href="${u && !member ? '/plans' : '/'}" aria-label="Impix főoldal">IMPIX</a>
       <nav class="nav-links" aria-label="Fő navigáció">${links}</nav>
       <div class="nav-spacer"></div>
-      ${u && html`<form class="nav-search" data-form="search" role="search">
+      ${member && html`<form class="nav-search" data-form="search" role="search">
         <input type="search" name="q" placeholder="Keresés…" aria-label="Keresés" autocomplete="off">
       </form>`}
       <div class="nav-right">
@@ -493,10 +632,13 @@ Object.assign(actions, {
   confirmYes: () => { const r = confirmResolve; confirmResolve = null; $modal.innerHTML = ''; r && r(true); },
   confirmNo: () => closeModal(),
   toggleMenu: (el) => el.closest('.menu').classList.toggle('open'),
+  railPrev: (el) => pageRail(el, -1),
+  railNext: (el) => pageRail(el, 1),
 
   async logout() {
     try { await api('/logout', { method: 'POST' }); } finally { setToken(null); }
     state.user = null; state.sub = null;
+    scheduleExpiry();
     goTo('/');
     toast('Sikeresen kijelentkeztél.');
   },
@@ -530,6 +672,7 @@ forms.search = (data) => {
 function afterAuth(data) {
   state.user = data.user;
   state.sub = data.subscription;
+  scheduleExpiry();
   applyServerPrefs(data.user);
   const to = state.returnTo || '/';
   state.returnTo = null;
@@ -596,16 +739,8 @@ async function homePage() {
 
   const hero = titles.find((t) => t.featured) || titles[0];
   const byRating = [...titles].sort((a, b) => b.rating - a.rating).slice(0, 12);
-  const rail = (name, list) => list.length ? html`
-    <section class="rail"><h2>${name}</h2><div class="rail-track">${list.map(tile)}</div></section>` : '';
 
   const genres = [...new Set(titles.map((t) => t.genre))];
-  const subBanner = !hasAccess() && html`
-    <div class="banner">
-      <div><strong>${state.sub ? 'Az előfizetésed lejárt.' : 'Még nincs előfizetésed.'}</strong>
-        <div class="muted">Válassz csomagot, és kezdd el nézni a filmeket és sorozatokat.</div></div>
-      <a class="btn primary" href="/plans">Csomagok megtekintése</a>
-    </div>`;
 
   const favorites = titles.filter((t) => t.fav);
 
@@ -622,13 +757,12 @@ async function homePage() {
       </div>
     </section>
     <div class="page">
-      ${subBanner}
       ${rail('♥ Kedvenceim', favorites)}
       ${rail('Legjobbra értékelt', byRating)}
       ${rail('Filmek', titles.filter((t) => t.type === 'movie'))}
       ${rail('Sorozatok', titles.filter((t) => t.type === 'series'))}
       ${genres.map((g) => { const l = titles.filter((t) => t.genre === g); return l.length > 1 ? rail(g, l) : ''; })}
-    </div>`);
+    </div>`, initRails);
 }
 
 async function landingPage() {
@@ -725,6 +859,7 @@ Object.assign(actions, {
     await api(`/favorites/${id}`, { method: on ? 'PUT' : 'DELETE' });
     document.querySelectorAll(`[data-action="toggleFav"][data-id="${id}"]`).forEach((b) => {
       b.classList.toggle('on', on);
+      if (on) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); } // szívverés-animáció
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
       b.title = on ? 'Eltávolítás a kedvencekből' : 'Kedvencekhez adás';
       const label = b.querySelector('.fav-label');
@@ -885,13 +1020,7 @@ async function watchPage({ id, ep }) {
           </div>
         </div></div>`);
     }
-    if (err.status !== 402) throw err;
-    return page(html`
-      <div class="page medium"><div class="locked">
-        <h1>Előfizetés szükséges</h1>
-        <p class="muted">${state.sub ? 'Az előfizetésed lejárt. Új előfizetéssel folytathatod a nézést.' : 'A megtekintéshez válassz egy csomagot.'}</p>
-        <a class="btn primary lg" href="/plans">Csomagok</a>
-      </div></div>`);
+    throw err; // 402: lejárt az előfizetés, a route() a Csomagok oldalra irányít
   }
   const eps = data.episodes;
   const idx = data.episode ? eps.findIndex((e) => e.id === data.episode.id) : -1;
@@ -930,8 +1059,9 @@ async function watchPage({ id, ep }) {
     startWatching(data.stream, (err) => {
       if (data.kind === 'embed') v.src = 'about:blank';
       else { v.pause(); v.removeAttribute('src'); v.load(); }
-      document.getElementById('player-error').textContent = err.status === 402 ? 'Az előfizetésed lejárt.' : err.message;
       stopWatching();
+      if (err.status === 402) { onExpiry(); return; } // lejárt: ellenőrzés, majd a Csomagok oldalra irányítás
+      document.getElementById('player-error').textContent = err.message;
     });
     if (data.kind === 'embed') return;
     v.addEventListener('error', () => { document.getElementById('player-error').textContent = 'A videó nem tölthető be. Próbáld újra később.'; });
@@ -974,9 +1104,12 @@ async function plansPage() {
   const sub = state.sub;
   const active = sub && sub.state === 'active';
   const cancelled = sub && sub.state === 'cancelled';
+  const expired = state.user && !hasAccess();
   return page(html`
     <div class="page">
       <h1 class="page-title center">Csomagok</h1>
+      ${expired && html`<div class="banner attention"><div><strong>${sub ? `Lejárt az előfizetésed (${fmtDate(sub.expires_at)}).` : 'Még nincs előfizetésed.'}</strong>
+        <div class="muted">A filmek és sorozatok megtekintéséhez válassz egy csomagot. Az új csomag azonnal aktív lesz.</div></div></div>`}
       <p class="muted center" style="margin-bottom:28px">Válaszd ki a számodra megfelelőt. Bármikor lemondható.</p>
       ${active && html`<div class="banner"><div><strong>Van aktív előfizetésed (${sub.plan_name}).</strong>
         <div class="muted">Másik csomagra váltáshoz előbb mondd le a jelenlegit a Fiók oldalon.</div></div>
@@ -1118,6 +1251,15 @@ async function accountPage() {
         : s.renews
           ? html`Automatikusan megújul: <strong>${fmtDate(s.expires_at)}</strong> (${s.days_left} nap múlva), ${fmtMoney(s.price)} a bankkártyádról.`
           : html`Érvényes eddig: <strong>${fmtDate(s.expires_at)}</strong> (${s.days_left} nap). Lejáratkor nem újul meg automatikusan.`}</p>
+    ${s.state === 'active' && s.renews && html`
+      <div class="renew-notice" role="note">
+        <span class="renew-icon" aria-hidden="true">⟳</span>
+        <div>
+          <strong class="renew-title">Az előfizetésed automatikusan megújul.</strong>
+          <div>Ha nem mondod le, a lejáratkor (${fmtDate(s.expires_at)}) a bankkártyádról levonjuk a havi díjat (<strong>${fmtMoney(s.price)}</strong>), és az előfizetésed újabb egy hónapra megújul.
+            Ha nem szeretnéd, <strong>mondd le a lejárat előtt</strong>: a kifizetett időszak végéig ezután is nézheted a tartalmakat.</div>
+        </div>
+      </div>`}
     <div class="row">
       ${s.state === 'active' && html`<button class="btn danger" data-action="cancelMine">Lemondás</button>`}
       ${s.state === 'cancelled' && html`<a class="btn primary" href="/checkout/${s.plan_id}">${s.stripe ? 'Lemondás visszavonása' : 'Előfizetés újra'}</a><a class="btn" href="/plans">Másik csomag választása</a>`}
