@@ -33,6 +33,10 @@ Környezeti változók:
 | `IMPIX_DB` | adatbázisfájl helye (alap: `data/impix.db`); a feltöltött videók az adatbázis melletti `videos/` mappába kerülnek |
 | `MAX_UPLOAD_MB` | feltöltött videó legnagyobb mérete MB-ban (alap: 2048) |
 | `CORS_ORIGINS` | melyik weboldalak (pl. GitHub Pages) hívhatják az API-t, vesszővel elválasztva |
+| `STRIPE_SECRET_KEY` | Stripe titkos kulcs (bankkártyás fizetés, lásd [STRIPE.md](STRIPE.md)) |
+| `STRIPE_WEBHOOK_SECRET` | a Stripe webhook aláíró titka (`whsec_…`) |
+| `SITE_URL` | a weboldal címe (ide tér vissza a felhasználó a fizetés után), pl. `https://impix.hu` |
+| `DEMO_PAYMENTS=1` | csak teszteléshez: ingyenes előfizetés Stripe nélkül (élesen tilos) |
 | `MEDIA_SECRET` | feltöltött videólinkek aláírásához (alapból a `data/media.key` fájlba generálódik) |
 | `TRUST_PROXY` | reverse proxy mögött állítsd `1`-re (HTTPS felismerés, kliens IP) |
 | `IMPIX_ALLOW_DEVTOOLS=1` | kikapcsolja a jobb klikk / F12 tiltást (fejlesztéshez) |
@@ -79,7 +83,10 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
 
 **Felhasználó**
 - Regisztráció, belépés, kilépés, profil- és jelszómódosítás
-- Csomagválasztás (Alap / Standard / Prémium), csomagváltás, megújítás, lemondás
+- Előfizetés **bankkártyával (Stripe)**, havi automatikus megújulással, lemondás, számlázási portál. Aktív előfizetés mellett
+  csomagot váltani nem lehet, előbb le kell mondani ([STRIPE.md](STRIPE.md))
+- A csomag **tényleg azt adja, ami benne van**: Alap 720p / 1 képernyő, Standard 1080p / 2 képernyő, Prémium 4K / 4 képernyő
+  (a szerver kényszeríti ki: a magasabb minőségű videólink ki sem megy, és az egyidejű lejátszások számát is számolja)
 - Katalógus (filmek, sorozatok, keresés, műfajszűrés), lejátszó, sorozatoknál automatikus következő epizód
 - A videó csak érvényes előfizetéssel érhető el (a szerver adja ki a címet, a katalógus nem tartalmazza)
 - Téma: sötét / világos / automatikus + 5 kiemelő szín; a fiókhoz mentődik
@@ -111,10 +118,9 @@ Beágyazott (Videa/YouTube/Vimeo) videónál a lejátszó külső oldalon fut: o
 
 ## Fontos tudnivalók
 
-- **A fizetés szimulált.** Nincs fizetési szolgáltató bekötve, és kártyaadatot sem kér az oldal.
-  Éles használathoz (pl. Stripe) a `POST /api/subscription` és `/api/subscription/renew` végpontokat kell hozzákötni
-  a fizetés visszaigazolásához.
-- **Automatikus megújítás nincs**: az előfizetés a 30 napos időszak végén lejár, a felhasználó (vagy az admin) újíthatja meg.
+- **Bankkártyás fizetés: Stripe.** Kulcs nélkül a fizetés ki van kapcsolva; beállítás: [STRIPE.md](STRIPE.md).
+  A kártyaadatokat a Stripe kezeli, az Impix szervere nem látja. A `DEMO_PAYMENTS=1` (ingyenes előfizetés) csak fejlesztéshez való.
+- **Az előfizetés havonta automatikusan megújul** (Stripe), amíg a felhasználó le nem mondja. Az admin által adott előfizetés nem újul meg.
 - A bemutató tartalmak videói külső, szabad licencű forrásokra mutatnak (Blender, archive.org, MDN).
   Az admin panelen bármelyik videó címe kicserélhető a saját tárhelyedre.
 - Éles üzemben HTTPS mögé kell tenni (reverse proxy); a szerver `Secure` sütit használ, ha a kapcsolat HTTPS.

@@ -347,6 +347,12 @@ td.actions .btn { margin-left: 4px; }
   background: var(--accent); color: var(--accent-ink); font-size: .75rem; font-weight: 700; line-height: 20px;
 }
 
+/* Minőségi címke (HD / Full HD / 4K) */
+.quality-tag {
+  display: inline-block; padding: 1px 8px; border-radius: 6px; font-size: .75rem; font-weight: 700; letter-spacing: .03em;
+  border: 1px solid var(--accent); color: var(--accent);
+}
+
 /* Videó feltöltés az űrlapban, beágyazott lejátszó */
 .upload-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .upload-row .btn { cursor: pointer; }

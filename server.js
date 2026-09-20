@@ -11,6 +11,7 @@ import { randomBytes, createHmac, timingSafeEqual, X509Certificate } from 'node:
 import { fileURLToPath } from 'node:url';
 import db, { tx, seed } from './db.js';
 import { hashPassword, verifyPassword, verifyDummy, hashToken, newToken } from './security.js';
+import * as billing from './billing.js';
 
 // Pterodactyl panelen a kiosztott portot a SERVER_PORT változó adja
 const PORT = Number(process.env.PORT || process.env.SERVER_PORT) || 3000;
@@ -140,8 +141,29 @@ function releaseMedia(src) {
   if (!src || !src.startsWith('/media/')) return;
   const file = src.slice(7);
   if (!MEDIA_RE.test(file)) return;
-  const used = db.prepare('SELECT (SELECT COUNT(*) FROM titles WHERE video_url = ?) + (SELECT COUNT(*) FROM episodes WHERE video_url = ?) AS c').get(src, src).c;
+  const used = db.prepare(`SELECT
+    (SELECT COUNT(*) FROM titles WHERE video_url = ? OR video_url_1080 = ? OR video_url_2160 = ?) +
+    (SELECT COUNT(*) FROM episodes WHERE video_url = ? OR video_url_1080 = ? OR video_url_2160 = ?) AS c`).get(src, src, src, src, src, src).c;
   if (!used) fs.rm(path.join(VIDEO_DIR, file), { force: true }, () => {});
+}
+
+// Egy videóhoz tartozó három minőségi változat (az alap a 720p vagy alacsonyabb; a másik kettő nem kötelező)
+const QUALITIES = [720, 1080, 2160];
+const QUALITY_LABEL = { 720: 'HD (720p)', 1080: 'Full HD (1080p)', 2160: 'Ultra HD (4K)' };
+const SOURCE_COLS = { 720: 'video_url', 1080: 'video_url_1080', 2160: 'video_url_2160' };
+const optionalVideo = (v, name) => (typeof v === 'string' && v.trim() ? videoSource(v, name) : null);
+const videoSources = (b) => ({
+  video_url: videoSource(b.video_url, 'Videó (alap, 720p)'),
+  video_url_1080: optionalVideo(b.video_url_1080, 'Videó (Full HD)'),
+  video_url_2160: optionalVideo(b.video_url_2160, 'Videó (4K)'),
+});
+
+// A felhasználó csomagja által megengedett legjobb változat. A csomag fölötti változat linkje ki sem kerül a szerverről.
+function pickSource(row, maxQuality) {
+  let chosen = null;
+  for (const q of QUALITIES) if (q <= maxQuality && row[SOURCE_COLS[q]]) chosen = q;
+  const higher = QUALITIES.find((q) => q > (chosen || 0) && q > maxQuality && row[SOURCE_COLS[q]]) || null;
+  return chosen ? { quality: chosen, url: row[SOURCE_COLS[chosen]], higher } : null;
 }
 
 // Elárvult (feltöltött, de sehol nem használt) fájlok takarítása
@@ -194,7 +216,7 @@ function ensureAdmin() {
 // ---------- Előfizetés logika ----------
 
 const SUB_SELECT = `
-  SELECT s.*, p.name AS plan_name, p.price, p.quality, p.screens
+  SELECT s.*, p.name AS plan_name, p.price, p.quality, p.max_quality, p.screens
   FROM subscriptions s JOIN plans p ON p.id = s.plan_id`;
 
 function subState(s, t = Date.now()) {
@@ -204,11 +226,14 @@ function subState(s, t = Date.now()) {
 function subView(s) {
   if (!s) return null;
   const t = Date.now();
+  const state = subState(s, t);
   return {
     id: s.id, user_id: s.user_id, plan_id: s.plan_id, plan_name: s.plan_name, price: s.price,
-    quality: s.quality, screens: s.screens, status: s.status, state: subState(s, t),
+    quality: s.quality, max_quality: s.max_quality, screens: s.screens, status: s.status, state,
     started_at: s.started_at, expires_at: s.expires_at,
     days_left: Math.max(0, Math.ceil((s.expires_at - t) / DAY)),
+    stripe: !!s.stripe_subscription_id,                      // a Stripe kezeli (kártyás előfizetés)
+    renews: !!s.stripe_subscription_id && state === 'active', // a lejárat napján automatikusan megújul
   };
 }
 const getSub = (userId) => db.prepare(`${SUB_SELECT} WHERE s.user_id = ?`).get(userId);
@@ -222,6 +247,32 @@ function recordPayment(userId, planName, amount, kind) {
   db.prepare('INSERT INTO payments (user_id, user_email, plan_name, amount, kind, created_at) VALUES (?,?,?,?,?,?)')
     .run(userId, u.email, planName, amount, kind, Date.now());
 }
+
+// Amit az előfizetés ténylegesen ad: legnagyobb videóminőség és egyidejű képernyők száma.
+// Az admin korlátlanul nézhet (tesztelés, tartalomellenőrzés).
+function entitlements(user) {
+  if (user.role === 'admin') return { maxQuality: 2160, screens: Infinity, planName: 'Admin' };
+  const s = getSub(user.id);
+  if (!s || s.expires_at <= Date.now()) return null;
+  return { maxQuality: s.max_quality, screens: s.screens, planName: s.plan_name };
+}
+
+// Egyidejű lejátszások: a lejátszó oldal percenként jelez; a 2 percig jelzés nélküli lejátszás felszabadul.
+const STREAM_TTL = 2 * 60_000;
+function claimStream(userId, streamKey, maxScreens) {
+  const t = Date.now();
+  db.prepare('DELETE FROM streams WHERE last_seen < ?').run(t - STREAM_TTL);
+  const known = db.prepare('SELECT 1 FROM streams WHERE id = ? AND user_id = ?').get(streamKey, userId);
+  if (!known) {
+    const active = db.prepare('SELECT COUNT(*) c FROM streams WHERE user_id = ?').get(userId).c;
+    if (active >= maxScreens) {
+      fail(`A csomagoddal egyszerre legfeljebb ${maxScreens} képernyőn nézhetsz. Állítsd le a lejátszást egy másik eszközön, vagy válts nagyobb csomagra.`, 429);
+    }
+  }
+  db.prepare(`INSERT INTO streams (id, user_id, started_at, last_seen) VALUES (?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET last_seen = excluded.last_seen`).run(streamKey, userId, t, t);
+}
+const validStreamId = (v) => (typeof v === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(v) ? v : fail('Érvénytelen lejátszás-azonosító.'));
 
 const publicUser = (u) => ({
   id: u.id, email: u.email, name: u.name, role: u.role, created_at: u.created_at,
@@ -264,6 +315,13 @@ app.use('/api', (req, res, next) => {
     if (req.method === 'OPTIONS') return res.sendStatus(204);
   }
   next();
+});
+
+// Stripe webhook: az aláírás ellenőrzéséhez a nyers törzs kell, ezért az express.json ELŐTT van regisztrálva.
+// A Stripe szerverről hívódik, nincs Origin fejléc; az aláírás (STRIPE_WEBHOOK_SECRET) hitelesíti.
+app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), async (req, res) => {
+  await billing.handleWebhook(req.body, req.get('stripe-signature'));
+  res.json({ received: true });
 });
 
 app.use(express.json({ limit: '100kb' }));
@@ -373,11 +431,17 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/me', (req, res) => {
-  if (!req.user) return res.json({ user: null, subscription: null });
+// Hogyan lehet fizetni: 'stripe' (éles), 'demo' (csak teszteléshez, ingyenes), 'off' (nincs beállítva)
+const DEMO_PAYMENTS = process.env.DEMO_PAYMENTS === '1';
+const paymentsMode = () => (billing.enabled ? 'stripe' : DEMO_PAYMENTS ? 'demo' : 'off');
+
+app.get('/api/me', async (req, res) => {
+  if (!req.user) return res.json({ user: null, subscription: null, payments: paymentsMode() });
+  await billing.syncUser(req.user.id); // megújulás, lemondás a Stripe-ban, sikertelen fizetés
   res.json({
     user: publicUser(req.user),
     subscription: subView(getSub(req.user.id)),
+    payments: paymentsMode(),
     newRecommendations: req.user.role === 'admin' ? newRecommendationCount() : 0,
   });
 });
@@ -412,38 +476,68 @@ app.get('/api/me/payments', requireAuth, (req, res) => {
 // ---------- Csomagok és saját előfizetés ----------
 
 app.get('/api/plans', (req, res) => {
-  res.json(db.prepare('SELECT id, name, price, quality, screens, description FROM plans WHERE active = 1 ORDER BY sort, price').all());
+  res.json(db.prepare('SELECT id, name, price, quality, max_quality, screens, description FROM plans WHERE active = 1 ORDER BY sort, price').all());
 });
 
-// Előfizetés / csomagváltás / újraaktiválás. A fizetés itt csak szimulált (bemutató verzió).
+const buyablePlan = (id) => db.prepare('SELECT * FROM plans WHERE id = ? AND active = 1').get(int(id, 'Csomag', 1, 1e9)) || fail('A csomag nem található.', 404);
+
+// Csomagváltás szabálya: aktív (le nem mondott) előfizetés mellett nem lehet másik csomagot venni.
+// Előbb le kell mondani. A lemondás után újat vásárolva az új csomag azonnal indul, a régi hátralévő napjai elvesznek.
+function assertCanBuy(cur) {
+  if (cur && cur.expires_at > Date.now() && cur.status === 'active') {
+    fail('Van aktív előfizetésed. Csomagváltáshoz előbb mondd le a jelenlegit.', 409);
+  }
+}
+
+// Fizetés indítása (Stripe Checkout). A válaszban kapott címre kell átirányítani a felhasználót.
+app.post('/api/checkout', requireAuth, async (req, res) => {
+  if (!billing.enabled) fail('A bankkártyás fizetés még nincs beállítva.', 503);
+  const plan = buyablePlan(req.body.planId);
+  await billing.syncUser(req.user.id, { force: true }); // friss állapot a döntés előtt
+  const cur = getSub(req.user.id);
+  assertCanBuy(cur);
+  // Lemondott, még érvényes, azonos csomag: nem kell újra fizetni, elég visszavonni a lemondást
+  if (cur && cur.expires_at > Date.now() && cur.plan_id === plan.id && cur.stripe_subscription_id) {
+    await billing.reactivate(req.user.id);
+    return res.json({ reactivated: true, subscription: subView(getSub(req.user.id)) });
+  }
+  res.json({ url: await billing.createCheckout(req.user, plan) });
+});
+
+// A Stripe-ról visszatérve ezzel aktiváljuk az előfizetést (a webhook nélkül is működik)
+app.post('/api/checkout/confirm', requireAuth, async (req, res) => {
+  const result = await billing.confirmCheckout(req.user, req.body.sessionId);
+  res.json({ ...result, subscription: subView(getSub(req.user.id)) });
+});
+
+// Számlázási portál (kártya módosítása, számlák) a Stripe-on
+app.post('/api/billing/portal', requireAuth, async (req, res) => {
+  res.json({ url: await billing.portalUrl(req.user) });
+});
+
+// Ingyenes bemutató előfizetés – CSAK teszteléshez (DEMO_PAYMENTS=1). Éles környezetben ki van kapcsolva.
 app.post('/api/subscription', requireAuth, (req, res) => {
-  const planId = int(req.body.planId, 'Csomag', 1, 1e9);
-  const plan = db.prepare('SELECT * FROM plans WHERE id = ? AND active = 1').get(planId);
-  if (!plan) fail('A csomag nem található.', 404);
+  if (!DEMO_PAYMENTS) fail('A fizetés bankkártyával, a Stripe-on keresztül történik.', 403);
+  const plan = buyablePlan(req.body.planId);
   const t = Date.now();
   const uid = req.user.id;
-
+  const cur = getSub(uid);
+  assertCanBuy(cur);
   tx(() => {
-    const cur = getSub(uid);
     if (!cur) {
       db.prepare('INSERT INTO subscriptions (user_id, plan_id, status, started_at, expires_at) VALUES (?,?,?,?,?)')
         .run(uid, plan.id, 'active', t, t + PERIOD_DAYS * DAY);
-      recordPayment(uid, plan.name, plan.price, 'subscribe');
-    } else if (cur.expires_at <= t) {
+    } else {
       db.prepare("UPDATE subscriptions SET plan_id = ?, status = 'active', started_at = ?, expires_at = ? WHERE user_id = ?")
         .run(plan.id, t, t + PERIOD_DAYS * DAY, uid);
-      recordPayment(uid, plan.name, plan.price, 'subscribe');
-    } else if (cur.plan_id === plan.id && cur.status === 'active') {
-      fail('Ez a csomag már aktív a fiókodon.', 409);
-    } else {
-      // Aktív időszak közben: azonnali váltás/újraaktiválás, díjat a következő megújításkor számolunk.
-      db.prepare("UPDATE subscriptions SET plan_id = ?, status = 'active' WHERE user_id = ?").run(plan.id, uid);
     }
+    recordPayment(uid, plan.name, plan.price, 'subscribe');
   });
   res.json({ subscription: subView(getSub(uid)) });
 });
 
 app.post('/api/subscription/renew', requireAuth, (req, res) => {
+  if (!DEMO_PAYMENTS) fail('A megújítás a Stripe-on keresztül automatikus.', 403);
   const cur = getSub(req.user.id);
   if (!cur) fail('Nincs előfizetésed.', 404);
   const t = Date.now();
@@ -455,12 +549,14 @@ app.post('/api/subscription/renew', requireAuth, (req, res) => {
   res.json({ subscription: subView(getSub(req.user.id)) });
 });
 
-// Lemondás: a már kifizetett időszak végéig marad a hozzáférés.
-app.post('/api/subscription/cancel', requireAuth, (req, res) => {
-  const cur = getSub(req.user.id);
+// Lemondás: a már kifizetett időszak végéig marad a hozzáférés, utána nem újul meg.
+app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  const cur = getSub(uid);
   if (!cur || cur.expires_at <= Date.now()) fail('Nincs aktív előfizetésed.', 404);
-  db.prepare("UPDATE subscriptions SET status = 'cancelled' WHERE user_id = ?").run(req.user.id);
-  res.json({ subscription: subView(getSub(req.user.id)) });
+  if (cur.stripe_subscription_id) await billing.cancelAtPeriodEnd(uid);
+  else db.prepare("UPDATE subscriptions SET status = 'cancelled' WHERE user_id = ?").run(uid);
+  res.json({ subscription: subView(getSub(uid)) });
 });
 
 // ---------- Tartalom ----------
@@ -469,6 +565,10 @@ const TITLE_PUBLIC = `t.id, t.type, t.title, t.description, t.year, t.genre, t.a
   t.duration_min, t.hue, t.featured,
   (SELECT COUNT(*) FROM episodes e WHERE e.title_id = t.id) AS episode_count,
   (SELECT COUNT(DISTINCT season) FROM episodes e WHERE e.title_id = t.id) AS season_count,
+  CASE WHEN t.type = 'movie'
+    THEN (CASE WHEN t.video_url_2160 IS NOT NULL THEN 2160 WHEN t.video_url_1080 IS NOT NULL THEN 1080 ELSE 720 END)
+    ELSE (SELECT COALESCE(MAX(CASE WHEN e.video_url_2160 IS NOT NULL THEN 2160 WHEN e.video_url_1080 IS NOT NULL THEN 1080 ELSE 720 END), 720)
+          FROM episodes e WHERE e.title_id = t.id) END AS best_quality,
   (SELECT COUNT(*) FROM favorites f WHERE f.title_id = t.id AND f.user_id = ?) AS fav`;
 
 app.get('/api/titles', requireAuth, (req, res) => {
@@ -492,24 +592,54 @@ app.get('/api/titles/:id', requireAuth, (req, res) => {
   res.json({ ...title, episodes });
 });
 
-// A videó címe csak érvényes előfizetéssel (vagy adminként) kérhető le.
-app.get('/api/watch/:id', requireAuth, (req, res) => {
+// A videó csak érvényes előfizetéssel kérhető le, és pontosan azt kapja, amit a csomagja ad:
+//  - a legjobb minőségű változatot, ami a csomag felső határáig elérhető (a magasabb linkek ki sem mennek a szerverről),
+//  - és legfeljebb annyi egyidejű képernyőn, amennyit a csomag enged.
+app.get('/api/watch/:id', requireAuth, async (req, res) => {
   const title = db.prepare('SELECT * FROM titles WHERE id = ?').get(Number(req.params.id));
   if (!title) fail('A tartalom nem található.', 404);
-  if (!hasAccess(req.user)) fail('A megtekintéshez aktív előfizetés szükséges.', 402);
+  await billing.syncUser(req.user.id);
+  const ent = entitlements(req.user);
+  if (!ent) fail('A megtekintéshez aktív előfizetés szükséges.', 402);
 
-  if (title.type === 'movie') {
-    return res.json({ title: title.title, type: 'movie', url: signedMedia(title.video_url, req.user.id), kind: videoKind(title.video_url), episodes: [], episode: null });
+  let row = title;
+  let episode = null;
+  let episodes = [];
+  if (title.type === 'series') {
+    const all = db.prepare('SELECT id, season, number, name, video_url, video_url_1080, video_url_2160 FROM episodes WHERE title_id = ? ORDER BY season, number').all(title.id);
+    if (!all.length) fail('Ehhez a sorozathoz még nincs epizód.', 404);
+    const wanted = Number(req.query.episode);
+    row = all.find((e) => e.id === wanted) || all[0];
+    episode = { id: row.id, season: row.season, number: row.number, name: row.name };
+    episodes = all.map((e) => ({ id: e.id, season: e.season, number: e.number, name: e.name }));
   }
-  const episodes = db.prepare('SELECT id, season, number, name, video_url FROM episodes WHERE title_id = ? ORDER BY season, number').all(title.id);
-  if (!episodes.length) fail('Ehhez a sorozathoz még nincs epizód.', 404);
-  const wanted = Number(req.query.episode);
-  const current = episodes.find((e) => e.id === wanted) || episodes[0];
+
+  const source = pickSource(row, ent.maxQuality);
+  if (!source) fail('Ehhez a videóhoz nincs a csomagodnak megfelelő minőségű változat.', 403);
+
+  const stream = req.query.stream ? validStreamId(String(req.query.stream)) : randomBytes(12).toString('hex');
+  claimStream(req.user.id, stream, ent.screens);
+
   res.json({
-    title: title.title, type: 'series', url: signedMedia(current.video_url, req.user.id), kind: videoKind(current.video_url),
-    episode: { id: current.id, season: current.season, number: current.number, name: current.name },
-    episodes: episodes.map(({ video_url, ...e }) => e),
+    title: title.title, type: title.type, url: signedMedia(source.url, req.user.id), kind: videoKind(source.url),
+    quality: source.quality, qualityLabel: QUALITY_LABEL[source.quality],
+    higherQuality: source.higher, higherLabel: source.higher ? QUALITY_LABEL[source.higher] : null,
+    plan: ent.planName, screens: Number.isFinite(ent.screens) ? ent.screens : null,
+    stream, episode, episodes,
   });
+});
+
+// A lejátszó percenként jelez, így a képernyők száma pontos marad. Ha a hely közben elfogyott, 429-et kap.
+app.post('/api/watch/ping', requireAuth, (req, res) => {
+  const ent = entitlements(req.user);
+  if (!ent) fail('Az előfizetésed lejárt.', 402);
+  claimStream(req.user.id, validStreamId(req.body.stream), ent.screens);
+  res.json({ ok: true });
+});
+
+app.post('/api/watch/end', requireAuth, (req, res) => {
+  db.prepare('DELETE FROM streams WHERE id = ? AND user_id = ?').run(validStreamId(req.body.stream), req.user.id);
+  res.json({ ok: true });
 });
 
 // Feltöltött videófájlok. A <video> elem nem tud Authorization fejlécet küldeni, ezért a /api/watch által kiadott,
@@ -596,6 +726,9 @@ admin.get('/stats', (req, res) => {
     titles: one('SELECT COUNT(*) c FROM titles').c,
     newRecommendations: newRecommendationCount(),
     tlsExpiresAt, // HTTPS tanúsítvány lejárata (null, ha a szerver nem maga szolgál ki HTTPS-t)
+    payments: paymentsMode(),
+    stripeMode: billing.mode, // 'test', 'live' vagy null
+    stripeWebhook: !!process.env.STRIPE_WEBHOOK_SECRET,
     byPlan: db.prepare(`
       SELECT p.name, COUNT(s.id) AS count FROM plans p
       LEFT JOIN subscriptions s ON s.plan_id = p.id AND s.expires_at > ?
@@ -636,11 +769,19 @@ admin.patch('/users/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-admin.delete('/users/:id', (req, res) => {
+// Stripe előfizetés megszüntetése (ha van és a Stripe be van állítva), hogy a számlázás ne folytatódjon tovább
+async function stripeStop(row) {
+  if (row && row.stripe_subscription_id && billing.enabled) await billing.cancelNow(row.stripe_subscription_id);
+}
+
+admin.delete('/users/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (id === req.user.id) fail('Saját fiókodat nem törölheted.');
-  const r = db.prepare('DELETE FROM users WHERE id = ?').run(id);
-  if (!r.changes) fail('A felhasználó nem található.', 404);
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  if (!user) fail('A felhasználó nem található.', 404);
+  // Ha a Stripe előfizetés megszüntetése nem sikerül, a fiók nem törlődik (különben a számlázás folytatódna)
+  await stripeStop(db.prepare('SELECT stripe_subscription_id FROM subscriptions WHERE user_id = ?').get(id));
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
   res.json({ ok: true });
 });
 
@@ -650,11 +791,12 @@ admin.get('/subscriptions', (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const rows = db.prepare(`
     SELECT s.id, s.user_id, s.plan_id, s.status, s.started_at, s.expires_at,
+           (s.stripe_subscription_id IS NOT NULL) AS stripe,
            u.email, u.name AS user_name, p.name AS plan_name, p.price
     FROM subscriptions s JOIN users u ON u.id = s.user_id JOIN plans p ON p.id = s.plan_id
     ${q ? "WHERE u.email LIKE ? ESCAPE '\\' OR u.name LIKE ? ESCAPE '\\'" : ''}
     ORDER BY s.expires_at DESC LIMIT 500`).all(...(q ? [like(q), like(q)] : []));
-  const withState = rows.map((r) => ({ ...r, state: subState(r, t) }));
+  const withState = rows.map((r) => ({ ...r, stripe: !!r.stripe, state: subState(r, t) }));
   const f = req.query.state;
   res.json(['active', 'cancelled', 'expired'].includes(f) ? withState.filter((r) => r.state === f) : withState);
 });
@@ -662,12 +804,30 @@ admin.get('/subscriptions', (req, res) => {
 const daysArg = (v) => int(v, 'Napok száma', 1, 3650);
 const activePlan = (id) => db.prepare('SELECT * FROM plans WHERE id = ?').get(int(id, 'Csomag', 1, 1e9)) || fail('A csomag nem található.', 404);
 
+// A kártyás (Stripe) előfizetéseket a Stripe kezeli: az admin csak megszüntetheti vagy törölheti őket.
+// Idő adása, csomagcsere és lejárat-szerkesztés csak az admin által adott (nem Stripe) előfizetésen lehetséges.
+function assertNotStripeManaged(row) {
+  if (row && row.stripe_subscription_id && row.expires_at > Date.now()) {
+    fail('Ezt az előfizetést a Stripe kezeli (kártyás előfizetés). Itt csak megszüntetni vagy törölni lehet; időt adni, csomagot cserélni vagy lejáratot módosítani nem.', 409);
+  }
+}
+// Lejárt Stripe-előfizetésnél a kapcsolatot megszüntetjük (a Stripe oldalon is leállítjuk), és admin által kezelt lesz
+async function detachStripe(row) {
+  if (!row || !row.stripe_subscription_id) return;
+  await stripeStop(row);
+  db.prepare('UPDATE subscriptions SET stripe_subscription_id = NULL, stripe_last_invoice = NULL, stripe_synced_at = NULL WHERE id = ?').run(row.id);
+}
+const rawSub = (id) => db.prepare('SELECT * FROM subscriptions WHERE id = ?').get(id);
+
 // Előfizetés adása egy felhasználónak (meglévőnél: csomagcsere + időtartam hozzáadása)
-admin.post('/subscriptions', (req, res) => {
+admin.post('/subscriptions', async (req, res) => {
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(int(req.body.userId, 'Felhasználó', 1, 1e9));
   if (!user) fail('A felhasználó nem található.', 404);
   const plan = activePlan(req.body.planId);
   const days = daysArg(req.body.days);
+  const existing = db.prepare('SELECT * FROM subscriptions WHERE user_id = ?').get(user.id);
+  assertNotStripeManaged(existing);
+  await detachStripe(existing);
   const t = Date.now();
   tx(() => {
     const cur = getSub(user.id);
@@ -685,10 +845,12 @@ admin.post('/subscriptions', (req, res) => {
   res.status(201).json({ subscription: subView(getSub(user.id)) });
 });
 
-admin.post('/subscriptions/:id/renew', (req, res) => {
+admin.post('/subscriptions/:id/renew', async (req, res) => {
   const sub = db.prepare(`${SUB_SELECT} WHERE s.id = ?`).get(Number(req.params.id));
   if (!sub) fail('Az előfizetés nem található.', 404);
   const days = daysArg(req.body.days);
+  assertNotStripeManaged(sub);
+  await detachStripe(sub);
   tx(() => {
     db.prepare("UPDATE subscriptions SET status = 'active', expires_at = ? WHERE id = ?")
       .run(Math.max(Date.now(), sub.expires_at) + days * DAY, sub.id);
@@ -697,26 +859,32 @@ admin.post('/subscriptions/:id/renew', (req, res) => {
   res.json({ ok: true });
 });
 
-// Azonnali megszüntetés
-admin.post('/subscriptions/:id/cancel', (req, res) => {
-  const r = db.prepare("UPDATE subscriptions SET status = 'cancelled', expires_at = ? WHERE id = ?").run(Date.now(), Number(req.params.id));
-  if (!r.changes) fail('Az előfizetés nem található.', 404);
+// Azonnali megszüntetés (Stripe előfizetésnél a Stripe-ban is leáll a számlázás; a kifizetett időszakot nem téríti vissza)
+admin.post('/subscriptions/:id/cancel', async (req, res) => {
+  const sub = rawSub(Number(req.params.id));
+  if (!sub) fail('Az előfizetés nem található.', 404);
+  await stripeStop(sub);
+  db.prepare("UPDATE subscriptions SET status = 'cancelled', expires_at = ? WHERE id = ?").run(Date.now(), sub.id);
   res.json({ ok: true });
 });
 
-admin.patch('/subscriptions/:id', (req, res) => {
-  const sub = db.prepare('SELECT * FROM subscriptions WHERE id = ?').get(Number(req.params.id));
+admin.patch('/subscriptions/:id', async (req, res) => {
+  const sub = rawSub(Number(req.params.id));
   if (!sub) fail('Az előfizetés nem található.', 404);
   const plan = activePlan(req.body.planId ?? sub.plan_id);
   const expires = req.body.expiresAt === undefined ? sub.expires_at : int(req.body.expiresAt, 'Lejárat', 0, 4102444800000);
+  assertNotStripeManaged(sub);
+  await detachStripe(sub);
   const status = expires > Date.now() && expires !== sub.expires_at ? 'active' : sub.status;
   db.prepare('UPDATE subscriptions SET plan_id = ?, expires_at = ?, status = ? WHERE id = ?').run(plan.id, expires, status, sub.id);
   res.json({ ok: true });
 });
 
-admin.delete('/subscriptions/:id', (req, res) => {
-  const r = db.prepare('DELETE FROM subscriptions WHERE id = ?').run(Number(req.params.id));
-  if (!r.changes) fail('Az előfizetés nem található.', 404);
+admin.delete('/subscriptions/:id', async (req, res) => {
+  const sub = rawSub(Number(req.params.id));
+  if (!sub) fail('Az előfizetés nem található.', 404);
+  await stripeStop(sub); // különben a Stripe tovább számláznák
+  db.prepare('DELETE FROM subscriptions WHERE id = ?').run(sub.id);
   res.json({ ok: true });
 });
 
@@ -728,10 +896,14 @@ admin.get('/plans', (req, res) => {
 });
 
 function planInput(b) {
+  const maxQuality = Number(b.max_quality);
+  if (!QUALITIES.includes(maxQuality)) fail('Minőség: válassz a listából (HD 720p, Full HD 1080p vagy 4K).');
+  const price = int(b.price, 'Ár', 175, 1_000_000); // a Stripe minimuma 175 Ft
   return {
     name: str(b.name, 'Név', { max: 40 }),
-    price: int(b.price, 'Ár', 0, 1_000_000),
-    quality: str(b.quality, 'Minőség', { max: 40 }),
+    price,
+    max_quality: maxQuality,
+    quality: QUALITY_LABEL[maxQuality], // a felirat a minőségi szintből következik, így sosem tér el attól, amit a csomag ténylegesen ad
     screens: int(b.screens, 'Képernyők', 1, 20),
     description: str(b.description ?? '', 'Leírás', { min: 0, max: 200 }),
     active: b.active === false ? 0 : 1,
@@ -740,14 +912,14 @@ function planInput(b) {
 admin.post('/plans', (req, res) => {
   const p = planInput(req.body);
   const sort = db.prepare('SELECT COALESCE(MAX(sort),0)+1 n FROM plans').get().n;
-  const id = Number(db.prepare('INSERT INTO plans (name, price, quality, screens, description, active, sort) VALUES (?,?,?,?,?,?,?)')
-    .run(p.name, p.price, p.quality, p.screens, p.description, p.active, sort).lastInsertRowid);
+  const id = Number(db.prepare('INSERT INTO plans (name, price, quality, max_quality, screens, description, active, sort) VALUES (?,?,?,?,?,?,?,?)')
+    .run(p.name, p.price, p.quality, p.max_quality, p.screens, p.description, p.active, sort).lastInsertRowid);
   res.status(201).json({ id });
 });
 admin.patch('/plans/:id', (req, res) => {
   const p = planInput(req.body);
-  const r = db.prepare('UPDATE plans SET name=?, price=?, quality=?, screens=?, description=?, active=? WHERE id=?')
-    .run(p.name, p.price, p.quality, p.screens, p.description, p.active, Number(req.params.id));
+  const r = db.prepare('UPDATE plans SET name=?, price=?, quality=?, max_quality=?, screens=?, description=?, active=? WHERE id=?')
+    .run(p.name, p.price, p.quality, p.max_quality, p.screens, p.description, p.active, Number(req.params.id));
   if (!r.changes) fail('A csomag nem található.', 404);
   res.json({ ok: true });
 });
@@ -839,31 +1011,34 @@ function titleInput(b) {
     rating: num(b.rating, 'Értékelés', 0, 10),
     duration_min: type === 'movie' ? int(b.duration_min, 'Hossz (perc)', 1, 1000) : null,
     hue: int(b.hue, 'Színárnyalat', 0, 359),
-    video_url: type === 'movie' ? videoSource(b.video_url) : null,
+    // A videó három minőségi változata (alap 720p; a Full HD és a 4K nem kötelező). Sorozatnál az epizódoknál adják meg.
+    ...(type === 'movie' ? videoSources(b) : { video_url: null, video_url_1080: null, video_url_2160: null }),
     featured: b.featured ? 1 : 0,
   };
 }
+const sourceList = (row) => (row ? [row.video_url, row.video_url_1080, row.video_url_2160] : []);
+
 admin.post('/titles', (req, res) => {
   const t = titleInput(req.body);
-  const id = Number(db.prepare(`INSERT INTO titles (type,title,description,year,genre,age,rating,duration_min,hue,video_url,featured,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, t.hue, t.video_url, t.featured, Date.now()).lastInsertRowid);
+  const id = Number(db.prepare(`INSERT INTO titles (type,title,description,year,genre,age,rating,duration_min,hue,video_url,video_url_1080,video_url_2160,featured,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, t.hue, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, Date.now()).lastInsertRowid);
   res.status(201).json({ id });
 });
 admin.patch('/titles/:id', (req, res) => {
   const t = titleInput(req.body);
   const id = Number(req.params.id);
-  const old = db.prepare('SELECT video_url FROM titles WHERE id = ?').get(id);
+  const old = db.prepare('SELECT video_url, video_url_1080, video_url_2160 FROM titles WHERE id = ?').get(id);
   if (!old) fail('A tartalom nem található.', 404);
-  db.prepare(`UPDATE titles SET type=?,title=?,description=?,year=?,genre=?,age=?,rating=?,duration_min=?,hue=?,video_url=?,featured=? WHERE id=?`)
-    .run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, t.hue, t.video_url, t.featured, id);
-  if (old.video_url !== t.video_url) releaseMedia(old.video_url);
+  db.prepare(`UPDATE titles SET type=?,title=?,description=?,year=?,genre=?,age=?,rating=?,duration_min=?,hue=?,video_url=?,video_url_1080=?,video_url_2160=?,featured=? WHERE id=?`)
+    .run(t.type, t.title, t.description, t.year, t.genre, t.age, t.rating, t.duration_min, t.hue, t.video_url, t.video_url_1080, t.video_url_2160, t.featured, id);
+  sourceList(old).forEach(releaseMedia); // amire már semmi nem hivatkozik, az törlődik
   res.json({ ok: true });
 });
 admin.delete('/titles/:id', (req, res) => {
   const id = Number(req.params.id);
-  const t = db.prepare('SELECT video_url FROM titles WHERE id = ?').get(id);
+  const t = db.prepare('SELECT video_url, video_url_1080, video_url_2160 FROM titles WHERE id = ?').get(id);
   if (!t) fail('A tartalom nem található.', 404);
-  const sources = [t.video_url, ...db.prepare('SELECT video_url FROM episodes WHERE title_id = ?').all(id).map((e) => e.video_url)];
+  const sources = [...sourceList(t), ...db.prepare('SELECT video_url, video_url_1080, video_url_2160 FROM episodes WHERE title_id = ?').all(id).flatMap(sourceList)];
   db.prepare('DELETE FROM titles WHERE id = ?').run(id);
   sources.forEach(releaseMedia);
   res.json({ ok: true });
@@ -875,17 +1050,18 @@ admin.get('/titles/:id/episodes', (req, res) => {
 admin.post('/titles/:id/episodes', (req, res) => {
   const title = db.prepare("SELECT id FROM titles WHERE id = ? AND type = 'series'").get(Number(req.params.id));
   if (!title) fail('Sorozat nem található.', 404);
-  const id = Number(db.prepare('INSERT INTO episodes (title_id, season, number, name, video_url) VALUES (?,?,?,?,?)')
+  const v = videoSources(req.body);
+  const id = Number(db.prepare('INSERT INTO episodes (title_id, season, number, name, video_url, video_url_1080, video_url_2160) VALUES (?,?,?,?,?,?,?)')
     .run(title.id, int(req.body.season, 'Évad', 1, 100), int(req.body.number, 'Epizód száma', 1, 1000),
-      str(req.body.name, 'Epizód címe', { max: 120 }), videoSource(req.body.video_url)).lastInsertRowid);
+      str(req.body.name, 'Epizód címe', { max: 120 }), v.video_url, v.video_url_1080, v.video_url_2160).lastInsertRowid);
   res.status(201).json({ id });
 });
 admin.delete('/episodes/:id', (req, res) => {
   const id = Number(req.params.id);
-  const ep = db.prepare('SELECT video_url FROM episodes WHERE id = ?').get(id);
+  const ep = db.prepare('SELECT video_url, video_url_1080, video_url_2160 FROM episodes WHERE id = ?').get(id);
   if (!ep) fail('Az epizód nem található.', 404);
   db.prepare('DELETE FROM episodes WHERE id = ?').run(id);
-  releaseMedia(ep.video_url);
+  sourceList(ep).forEach(releaseMedia);
   res.json({ ok: true });
 });
 
@@ -904,8 +1080,13 @@ app.use(express.static(fileURLToPath(new URL('./public/', import.meta.url))));
 
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
-  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
+  if (err instanceof HttpError || err.isHttp) return res.status(err.status).json({ error: err.message });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Hibás JSON.' });
+  if (typeof err.type === 'string' && err.type.startsWith('Stripe')) {
+    // A Stripe hibáit a naplóba írjuk (kulcs nélkül), a felhasználónak általános üzenetet adunk
+    console.error(`Stripe hiba: ${err.type} ${err.code || ''} ${err.message}`);
+    return res.status(502).json({ error: 'A fizetési szolgáltatóval most nem sikerült kapcsolatot teremteni. Próbáld újra később.' });
+  }
   console.error(err);
   res.status(500).json({ error: 'Váratlan szerverhiba.' });
 });

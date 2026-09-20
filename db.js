@@ -104,9 +104,46 @@ CREATE TABLE IF NOT EXISTS recommendations (
   created_at INTEGER NOT NULL
 );
 
+-- Egyidejű lejátszások nyilvántartása (a csomag képernyőszámának betartatásához)
+CREATE TABLE IF NOT EXISTS streams (
+  id         TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  started_at INTEGER NOT NULL,
+  last_seen  INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_episodes_title ON episodes(title_id, season, number);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_streams_user ON streams(user_id);
 `);
+
+// ---- Séma-frissítések meglévő adatbázisokhoz (többször is lefuthatnak) ----
+
+function addColumn(table, column, ddl) {
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  return !exists;
+}
+
+// A csomag által adott legnagyobb videóminőség (magasság pixelben): 720, 1080 vagy 2160 (4K)
+if (addColumn('plans', 'max_quality', 'INTEGER NOT NULL DEFAULT 720')) {
+  db.exec(`UPDATE plans SET max_quality = CASE
+    WHEN quality LIKE '%4K%' OR quality LIKE '%2160%' THEN 2160
+    WHEN quality LIKE '%1080%' THEN 1080 ELSE 720 END`);
+}
+// Stripe kapcsolatok
+addColumn('plans', 'stripe_product_id', 'TEXT');
+addColumn('plans', 'stripe_price_id', 'TEXT');
+addColumn('plans', 'stripe_price_amount', 'INTEGER');
+addColumn('users', 'stripe_customer_id', 'TEXT');
+addColumn('subscriptions', 'stripe_subscription_id', 'TEXT');
+addColumn('subscriptions', 'stripe_last_invoice', 'TEXT');
+addColumn('subscriptions', 'stripe_synced_at', 'INTEGER');
+// Magasabb minőségű változatok (a videó alap, azaz `video_url` a 720p vagy alacsonyabb változat)
+for (const table of ['titles', 'episodes']) {
+  addColumn(table, 'video_url_1080', 'TEXT');
+  addColumn(table, 'video_url_2160', 'TEXT');
+}
 
 export function tx(fn) {
   db.exec('BEGIN');
@@ -135,10 +172,10 @@ const V = {
 
 export function seed() {
   if (db.prepare('SELECT COUNT(*) c FROM plans').get().c === 0) {
-    const ins = db.prepare('INSERT INTO plans (name, price, quality, screens, description, sort) VALUES (?,?,?,?,?,?)');
-    ins.run('Alap', 1490, 'HD (720p)', 1, 'Egy képernyő, korlátlan filmek és sorozatok.', 1);
-    ins.run('Standard', 2490, 'Full HD (1080p)', 2, 'Két képernyő egyszerre, Full HD minőségben.', 2);
-    ins.run('Prémium', 3490, 'Ultra HD (4K)', 4, 'Négy képernyő egyszerre, 4K minőségben.', 3);
+    const ins = db.prepare('INSERT INTO plans (name, price, quality, max_quality, screens, description, sort) VALUES (?,?,?,?,?,?,?)');
+    ins.run('Alap', 1490, 'HD (720p)', 720, 1, 'Egy képernyő, korlátlan filmek és sorozatok HD minőségben.', 1);
+    ins.run('Standard', 2490, 'Full HD (1080p)', 1080, 2, 'Két képernyő egyszerre, Full HD minőségben.', 2);
+    ins.run('Prémium', 3490, 'Ultra HD (4K)', 2160, 4, 'Négy képernyő egyszerre, 4K minőségben.', 3);
   }
 
   if (db.prepare('SELECT COUNT(*) c FROM titles').get().c === 0) {

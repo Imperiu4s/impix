@@ -9,7 +9,8 @@ const $nav = document.getElementById('nav');
 const $modal = document.getElementById('modal-root');
 const $toasts = document.getElementById('toasts');
 
-const state = { user: null, sub: null, plans: null, returnTo: null, newRecs: 0 };
+// payments: 'stripe' (kártyás fizetés), 'demo' (ingyenes teszt), 'off' (nincs beállítva)
+const state = { user: null, sub: null, plans: null, returnTo: null, newRecs: 0, payments: 'off' };
 
 // ---------- Sablonkezelés: minden érték alapból escape-elt ----------
 
@@ -67,7 +68,12 @@ const fromDateInput = (s) => new Date(`${s}T23:59:59`).getTime();
 
 const STATE_LABEL = { active: 'Aktív', cancelled: 'Lemondva', expired: 'Lejárt' };
 const stateBadge = (s) => html`<span class="badge ${s || 'none'}">${STATE_LABEL[s] || 'Nincs'}</span>`;
-const PAY_KIND = { subscribe: 'Előfizetés', renew: 'Megújítás', admin_grant: 'Admin által adva', admin_renew: 'Admin által megújítva' };
+const PAY_KIND = {
+  subscribe: 'Előfizetés', renew: 'Megújítás', admin_grant: 'Admin által adva', admin_renew: 'Admin által megújítva',
+  stripe_subscribe: 'Előfizetés (bankkártya)', stripe_renew: 'Automatikus megújítás (bankkártya)',
+};
+const QUALITY_NAME = { 720: 'HD', 1080: 'Full HD', 2160: '4K' };
+const QUALITY_FULL = { 720: 'HD (720p)', 1080: 'Full HD (1080p)', 2160: 'Ultra HD (4K)' };
 
 const hasAccess = () => !!state.user && (state.user.role === 'admin' || (!!state.sub && state.sub.state !== 'expired'));
 const page = (view, mounted) => ({ html: view, mounted });
@@ -85,6 +91,7 @@ async function refreshMe() {
   state.user = d.user;
   state.sub = d.subscription;
   state.newRecs = d.newRecommendations || 0;
+  state.payments = d.payments || 'off';
   return d;
 }
 async function getPlans(force) {
@@ -128,6 +135,7 @@ const titleMeta = (t) => html`
     <span class="age" title="Ajánlott életkor">${ageLabel(t.age)}</span>
     <span>${t.genre}</span>
     <span>${t.type === 'movie' ? `${t.duration_min} perc` : `${t.episode_count} epizód`}</span>
+    ${t.best_quality && html`<span class="quality-tag" title="A legjobb elérhető minőség (a csomagod szerint nézhető ennél lehet kevesebb)">${QUALITY_NAME[t.best_quality]}</span>`}
   </div>`;
 
 const loading = () => html`<div class="loading">Betöltés…</div>`;
@@ -147,6 +155,7 @@ const routes = [
   [/^\/title\/(\d+)$/, ['id'], titlePage, 'auth'],
   [/^\/watch\/(\d+)(?:\/(\d+))?$/, ['id', 'ep'], watchPage, 'auth'],
   [/^\/checkout\/(\d+)$/, ['id'], checkoutPage, 'auth'],
+  [/^\/payment\/return$/, [], paymentReturnPage, 'auth'],
   [/^\/account$/, [], accountPage, 'auth'],
   [/^\/admin(?:\/(\w+))?$/, ['tab'], adminPage, 'admin'],
 ];
@@ -175,6 +184,7 @@ async function route(keepScroll = false) {
   if (guard && !state.user) { state.returnTo = location.hash || '#/'; location.hash = '#/login'; return; }
   if (guard === 'admin' && state.user.role !== 'admin') { location.hash = '#/'; return; }
 
+  if (!path.startsWith('/watch/')) stopWatching(); // a lejátszó oldalról kilépve felszabadul a képernyő
   renderNav();
   if (path !== lastPath) $app.innerHTML = loading().__html;
 
@@ -450,6 +460,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
 window.addEventListener('hashchange', () => route());
 
 Object.assign(actions, {
+  retryWatch: () => refresh(),
   closeModal: () => closeModal(),
   formCancel: () => (modalCtx && modalCtx.back ? modalCtx.back() : closeModal()),
   backdrop: () => closeModal(),
@@ -798,16 +809,61 @@ async function titlePage({ id }) {
     </div>`);
 }
 
+// ---- Egyidejű lejátszások (képernyők) ----
+// Minden lejátszó oldal egy azonosítót kap, és 45 másodpercenként jelez a szervernek. A szerver ebből számolja,
+// hány képernyőn néz a felhasználó egyszerre. Epizódváltáskor ugyanazt az azonosítót használjuk tovább.
+let activeWatch = null; // { stream, timer }
+const newStreamId = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
+
+function endStream(stream) {
+  try {
+    fetch(`${API_BASE}/api/watch/end`, {
+      method: 'POST', keepalive: true, credentials: CROSS_ORIGIN ? 'omit' : 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ stream }),
+    }).catch(() => {});
+  } catch { /* a lap már bezáródik */ }
+}
+function stopWatching() {
+  if (!activeWatch) return;
+  clearInterval(activeWatch.timer);
+  const { stream } = activeWatch;
+  activeWatch = null;
+  endStream(stream);
+}
+function startWatching(stream, onDenied) {
+  if (activeWatch) clearInterval(activeWatch.timer);
+  activeWatch = {
+    stream,
+    timer: setInterval(async () => {
+      try { await api('/watch/ping', { method: 'POST', body: { stream } }); }
+      catch (err) { if (err.status === 429 || err.status === 402) onDenied(err); }
+    }, 45_000),
+  };
+}
+window.addEventListener('pagehide', () => { if (activeWatch) endStream(activeWatch.stream); });
+
 async function watchPage({ id, ep }) {
   let data;
+  const stream = activeWatch ? activeWatch.stream : newStreamId();
   try {
-    data = await api(`/watch/${id}${ep ? `?episode=${ep}` : ''}`);
+    data = await api(`/watch/${id}?stream=${stream}${ep ? `&episode=${ep}` : ''}`);
   } catch (err) {
+    if (err.status === 429) { // túl sok képernyő
+      return page(html`
+        <div class="page medium"><div class="locked">
+          <h1>Túl sok képernyő</h1>
+          <p>${err.message}</p>
+          <div class="row" style="justify-content:center">
+            <button class="btn primary" data-action="retryWatch">Újrapróbálom</button>
+            <a class="btn" href="#/plans">Csomagok</a>
+          </div>
+        </div></div>`);
+    }
     if (err.status !== 402) throw err;
     return page(html`
       <div class="page medium"><div class="locked">
         <h1>Előfizetés szükséges</h1>
-        <p class="muted">${state.sub ? 'Az előfizetésed lejárt. Újítsd meg a nézés folytatásához.' : 'A megtekintéshez válassz egy csomagot.'}</p>
+        <p class="muted">${state.sub ? 'Az előfizetésed lejárt. Új előfizetéssel folytathatod a nézést.' : 'A megtekintéshez válassz egy csomagot.'}</p>
         <a class="btn primary lg" href="#/plans">Csomagok</a>
       </div></div>`);
   }
@@ -831,6 +887,10 @@ async function watchPage({ id, ep }) {
                 <p class="muted" style="font-size:.85rem;margin-top:8px">Külső lejátszó – a következő rész automatikus indítása ennél a videónál nem működik.</p>`
             : html`<video id="player" controls autoplay playsinline controlsList="nodownload noremoteplayback" src="${mediaUrl(data.url)}"></video>`}
           <p id="player-error" class="form-error"></p>
+          <div class="row between" style="margin-top:10px">
+            <span class="quality-tag" title="A csomagod által adott minőség">${data.qualityLabel}</span>
+            ${data.higherQuality && html`<span class="muted" style="font-size:.9rem">Ez a tartalom ${QUALITY_FULL[data.higherQuality]} minőségben is elérhető nagyobb csomaggal. <a href="#/plans" style="color:var(--accent)">Csomagok</a></span>`}
+          </div>
         </div>
         ${eps.length > 0 && html`
           <aside><h2>Epizódok</h2><div class="episode-list">
@@ -840,6 +900,13 @@ async function watchPage({ id, ep }) {
       </div>
     </div>`, () => {
     const v = document.getElementById('player');
+    // Ha közben elfogyott a hely (másik eszközön is elindult a lejátszás), leállítjuk ezt a lejátszót
+    startWatching(data.stream, (err) => {
+      if (data.kind === 'embed') v.src = 'about:blank';
+      else { v.pause(); v.removeAttribute('src'); v.load(); }
+      document.getElementById('player-error').textContent = err.status === 402 ? 'Az előfizetésed lejárt.' : err.message;
+      stopWatching();
+    });
     if (data.kind === 'embed') return;
     v.addEventListener('error', () => { document.getElementById('player-error').textContent = 'A videó nem tölthető be. Próbáld újra később.'; });
     if (next) v.addEventListener('ended', () => { location.hash = `#/watch/${id}/${next.id}`; });
@@ -853,32 +920,45 @@ async function watchPage({ id, ep }) {
 function planCard(p, sub) {
   const valid = sub && sub.state !== 'expired';
   const isCurrent = valid && sub.plan_id === p.id;
-  let label = 'Előfizetés';
-  let disabled = false;
-  if (isCurrent && sub.state === 'active') { label = 'Jelenlegi csomag'; disabled = true; }
-  else if (isCurrent) label = 'Újraaktiválás';
-  else if (valid) label = 'Váltás erre';
+  const blocked = valid && sub.state === 'active' && !isCurrent; // aktív előfizetés mellett nem lehet másik csomagot venni
+
+  let action;
+  if (isCurrent && sub.state === 'active') action = html`<button class="btn" disabled>Jelenlegi csomag</button>`;
+  else if (blocked) action = html`<button class="btn" disabled title="Csomagváltáshoz előbb mondd le a jelenlegi előfizetésedet">Előbb mondd le a jelenlegit</button>`;
+  else action = html`<a class="btn primary" href="#/checkout/${p.id}">${isCurrent ? 'Lemondás visszavonása' : valid ? 'Váltás erre' : 'Előfizetés'}</a>`;
 
   return html`
     <div class="card plan ${isCurrent ? 'current' : ''}">
       <h2>${p.name}</h2>
       <div class="price">${fmtMoney(p.price)}<small> / hó</small></div>
       <p class="muted">${p.description}</p>
-      <ul><li>${p.quality}</li><li>${p.screens} egyidejű képernyő</li><li>Korlátlan film és sorozat</li><li>Bármikor lemondható</li></ul>
-      ${disabled
-        ? html`<button class="btn" disabled>${label}</button>`
-        : html`<a class="btn primary" href="#/checkout/${p.id}">${label}</a>`}
+      <ul>
+        <li>Legfeljebb <strong>${QUALITY_FULL[p.max_quality] || p.quality}</strong> minőség</li>
+        <li><strong>${p.screens}</strong> egyidejű képernyő</li>
+        <li>Korlátlan film és sorozat</li>
+        <li>Bármikor lemondható</li>
+      </ul>
+      ${action}
     </div>`;
 }
 
 async function plansPage() {
   const plans = await getPlans(true);
   if (state.user) await refreshMe();
+  const sub = state.sub;
+  const active = sub && sub.state === 'active';
+  const cancelled = sub && sub.state === 'cancelled';
   return page(html`
     <div class="page">
       <h1 class="page-title center">Csomagok</h1>
-      <p class="muted center" style="margin-bottom:28px">Válaszd ki a számodra megfelelőt. Bármikor válthatsz vagy lemondhatod.</p>
+      <p class="muted center" style="margin-bottom:28px">Válaszd ki a számodra megfelelőt. Bármikor lemondható.</p>
+      ${active && html`<div class="banner"><div><strong>Van aktív előfizetésed (${sub.plan_name}).</strong>
+        <div class="muted">Másik csomagra váltáshoz előbb mondd le a jelenlegit a Fiók oldalon.</div></div>
+        <a class="btn" href="#/account">Fiók</a></div>`}
+      ${cancelled && html`<div class="banner"><div><strong>Az előfizetésed le van mondva (${fmtDate(sub.expires_at)}-ig érvényes).</strong>
+        <div class="muted">Új csomag választásakor az azonnal indul, a jelenlegi hátralévő napjai elvesznek.</div></div></div>`}
       <div class="plans">${plans.map((p) => planCard(p, state.sub))}</div>
+      <p class="muted center" style="margin-top:20px;font-size:.88rem">Az előfizetés havonta automatikusan megújul, amíg le nem mondod. A fizetést a Stripe kezeli, a kártyaadataidat mi nem látjuk.</p>
     </div>`);
 }
 
@@ -890,39 +970,100 @@ async function checkoutPage({ id }) {
 
   const sub = state.sub;
   const valid = sub && sub.state !== 'expired';
-  let intro = `A(z) ${plan.name} csomag ${fmtMoney(plan.price)} / hó áron, 30 napos időszakra indul.`;
-  let submit = `Előfizetés – ${fmtMoney(plan.price)}`;
-  if (valid && sub.plan_id === plan.id) {
-    intro = `A(z) ${plan.name} csomag újraaktiválása. Az időszak vége: ${fmtDate(sub.expires_at)}, most nem terheljük.`;
-    submit = 'Újraaktiválás';
-  } else if (valid) {
-    intro = `Csomagváltás: ${sub.plan_name} → ${plan.name}. A váltás azonnal életbe lép, az időszak vége (${fmtDate(sub.expires_at)}) nem változik; az új díjat a következő megújításkor számoljuk.`;
-    submit = 'Csomag váltása';
+
+  if (state.payments === 'off') {
+    return page(html`<div class="page narrow"><div class="card center"><h1>A fizetés még nem elérhető</h1>
+      <p class="muted">A bankkártyás fizetés beállítása folyamatban van. Kérjük, nézz vissza később.</p>
+      <a class="btn" href="#/plans">Vissza</a></div></div>`);
   }
-  if (valid && sub.plan_id === plan.id && sub.state === 'active') { location.hash = '#/account'; return page(loading()); }
+  // Aktív előfizetés mellett nem lehet másik csomagot venni: előbb le kell mondani
+  if (valid && sub.state === 'active') {
+    return page(html`<div class="page narrow"><div class="card center"><h1>Van aktív előfizetésed</h1>
+      <p>Jelenleg a(z) <strong>${sub.plan_name}</strong> csomagod aktív (${fmtDate(sub.expires_at)}-ig).
+        Csomagváltáshoz előbb mondd le, utána választhatsz újat.</p>
+      <div class="row" style="justify-content:center"><a class="btn primary" href="#/account">Lemondás a Fiók oldalon</a><a class="btn" href="#/plans">Vissza</a></div></div></div>`);
+  }
+
+  const reactivate = valid && sub.plan_id === plan.id && sub.stripe; // lemondott, de még érvényes azonos csomag
+  let notice = null;
+  if (reactivate) {
+    notice = `Az előfizetésed le van mondva, ${fmtDate(sub.expires_at)}-ig érvényes. A lemondás visszavonásával újra automatikusan megújul; most nem kell fizetned.`;
+  } else if (valid) {
+    notice = `Figyelem: a jelenlegi (${sub.plan_name}) előfizetésed le van mondva, ${fmtDate(sub.expires_at)}-ig érvényes. Az új csomag azonnal indul, a jelenlegi hátralévő napjai elvesznek.`;
+  }
 
   return page(html`
     <div class="page narrow">
       <div class="card">
-        <h1 class="page-title">Megerősítés</h1>
+        <h1 class="page-title">${reactivate ? 'Lemondás visszavonása' : 'Előfizetés'}</h1>
         <div class="row between"><strong>${plan.name}</strong><span>${fmtMoney(plan.price)} / hó</span></div>
-        <p class="muted">${plan.quality} · ${plan.screens} képernyő</p>
-        <p>${intro}</p>
-        <p class="muted" style="font-size:.88rem">Bemutató verzió: valódi fizetés nem történik, és kártyaadatot sem kérünk.</p>
+        <p class="muted">Legfeljebb ${QUALITY_FULL[plan.max_quality] || plan.quality} minőség · ${plan.screens} egyidejű képernyő</p>
+        ${notice && html`<p class="banner" style="margin-bottom:16px">${notice}</p>`}
+        ${!reactivate && html`<p class="muted" style="font-size:.9rem">Az előfizetés havonta automatikusan megújul, amíg le nem mondod (a Fiók oldalon bármikor). A bankkártyás fizetést a Stripe kezeli: a kártyaadataidat mi nem látjuk és nem tároljuk.</p>`}
+        ${state.payments === 'demo' && html`<p class="muted" style="font-size:.88rem">Bemutató üzemmód: valódi fizetés nem történik.</p>`}
         <form class="form" data-form="checkout" data-plan="${plan.id}">
           <p class="form-error" role="alert"></p>
-          <button class="btn primary lg">${submit}</button>
+          <button class="btn primary lg">${reactivate ? 'Lemondás visszavonása' : state.payments === 'demo' ? 'Előfizetés (teszt)' : `Fizetés bankkártyával – ${fmtMoney(plan.price)}`}</button>
           <a class="btn ghost" href="#/plans">Mégse</a>
         </form>
       </div>
     </div>`);
 }
 forms.checkout = async (data, form) => {
-  const res = await api('/subscription', { method: 'POST', body: { planId: Number(form.dataset.plan) } });
-  state.sub = res.subscription;
-  toast('Az előfizetés sikeresen frissítve.');
-  location.hash = '#/account';
+  const planId = Number(form.dataset.plan);
+  if (state.payments === 'demo') {
+    const res = await api('/subscription', { method: 'POST', body: { planId } });
+    state.sub = res.subscription;
+    toast('Az előfizetés sikeresen frissítve.');
+    goTo('#/account');
+    return;
+  }
+  const res = await api('/checkout', { method: 'POST', body: { planId } });
+  if (res.reactivated) {
+    state.sub = res.subscription;
+    toast('A lemondás visszavonva, az előfizetés újra megújul.');
+    goTo('#/account');
+    return;
+  }
+  location.href = res.url; // átirányítás a Stripe biztonságos fizetési oldalára
+  await new Promise(() => {}); // a gomb maradjon letiltva az átirányításig
 };
+
+// A Stripe-ról visszatérve itt aktiváljuk az előfizetést (a webhooktól függetlenül működik)
+async function paymentReturnPage() {
+  const sessionId = new URLSearchParams(location.search).get('checkout_session');
+  if (!sessionId) {
+    return page(html`<div class="page narrow"><div class="card center"><h1>Nincs fizetési azonosító</h1>
+      <a class="btn" href="#/plans">Csomagok</a></div></div>`);
+  }
+  let res;
+  try {
+    res = await api('/checkout/confirm', { method: 'POST', body: { sessionId } });
+  } catch (err) {
+    return page(html`<div class="page narrow"><div class="card center"><h1>A fizetés ellenőrzése nem sikerült</h1>
+      <p class="muted">${err.message}</p>
+      <div class="row" style="justify-content:center"><button class="btn primary" data-action="retryPayment">Újrapróbálom</button><a class="btn" href="#/account">Fiók</a></div></div></div>`);
+  }
+  if (res.status === 'open') {
+    history.replaceState(null, '', location.pathname + location.hash);
+    return page(html`<div class="page narrow"><div class="card center"><h1>A fizetés nem fejeződött be</h1>
+      <p class="muted">Nem történt terhelés. Bármikor újra megpróbálhatod.</p><a class="btn primary" href="#/plans">Csomagok</a></div></div>`);
+  }
+  if (res.status === 'pending') {
+    return page(html`<div class="page narrow"><div class="card center"><h1>A fizetés feldolgozás alatt van</h1>
+      <p class="muted">A bank még nem igazolta vissza a fizetést. Ez pár percig is eltarthat, az előfizetésed automatikusan aktív lesz.</p>
+      <div class="row" style="justify-content:center"><button class="btn primary" data-action="retryPayment">Frissítés</button><a class="btn" href="#/">Főoldal</a></div></div></div>`);
+  }
+  history.replaceState(null, '', location.pathname + location.hash);
+  state.sub = res.subscription;
+  const s = res.subscription;
+  return page(html`<div class="page narrow"><div class="card center">
+    <h1>Sikeres fizetés! 🎉</h1>
+    <p>A(z) <strong>${s ? s.plan_name : ''}</strong> előfizetésed aktív${s ? html`, ${fmtDate(s.expires_at)}-ig, utána automatikusan megújul` : ''}.</p>
+    <div class="row" style="justify-content:center"><a class="btn primary lg" href="#/">Irány a filmek</a><a class="btn" href="#/account">Fiók</a></div>
+  </div></div>`);
+}
+actions.retryPayment = () => refresh();
 
 // ==========================================================
 //  Fiók
@@ -935,23 +1076,29 @@ async function accountPage() {
   const themes = [['dark', 'Sötét'], ['light', 'Világos'], ['auto', 'Automatikus']];
   const accents = [['red', 'Piros'], ['blue', 'Kék'], ['purple', 'Lila'], ['green', 'Zöld'], ['orange', 'Narancs']];
 
+  const demo = me.payments === 'demo';
   const subCard = s ? html`
     <div class="row between">
       <div>
         <div class="row" style="gap:10px"><strong style="font-size:1.3rem">${s.plan_name}</strong> ${stateBadge(s.state)}</div>
-        <div class="muted">${s.quality} · ${s.screens} képernyő · ${fmtMoney(s.price)} / hó</div>
+        <div class="muted">Legfeljebb ${QUALITY_FULL[s.max_quality] || s.quality} · ${s.screens} egyidejű képernyő · ${fmtMoney(s.price)} / hó</div>
       </div>
     </div>
     <p style="margin:14px 0">${s.state === 'expired'
       ? html`Lejárt: <strong>${fmtDate(s.expires_at)}</strong>`
       : s.state === 'cancelled'
-        ? html`Lemondva – a hozzáférésed eddig él: <strong>${fmtDate(s.expires_at)}</strong> (${s.days_left} nap)`
-        : html`Következő megújítás / lejárat: <strong>${fmtDate(s.expires_at)}</strong> (${s.days_left} nap)`}</p>
+        ? html`Lemondva – a hozzáférésed eddig él: <strong>${fmtDate(s.expires_at)}</strong> (${s.days_left} nap). Utána nem újul meg.`
+        : s.renews
+          ? html`Automatikusan megújul: <strong>${fmtDate(s.expires_at)}</strong> (${s.days_left} nap múlva), ${fmtMoney(s.price)} a bankkártyádról.`
+          : html`Érvényes eddig: <strong>${fmtDate(s.expires_at)}</strong> (${s.days_left} nap). Lejáratkor nem újul meg automatikusan.`}</p>
     <div class="row">
-      <button class="btn primary" data-action="renewMine">${s.state === 'expired' ? 'Újraindítás' : 'Megújítás +30 nap'}</button>
-      <a class="btn" href="#/plans">Csomag váltása</a>
       ${s.state === 'active' && html`<button class="btn danger" data-action="cancelMine">Lemondás</button>`}
-    </div>`
+      ${s.state === 'cancelled' && html`<a class="btn primary" href="#/checkout/${s.plan_id}">${s.stripe ? 'Lemondás visszavonása' : 'Előfizetés újra'}</a><a class="btn" href="#/plans">Másik csomag választása</a>`}
+      ${s.state === 'expired' && html`<a class="btn primary" href="#/plans">Új előfizetés</a>`}
+      ${s.stripe && html`<button class="btn" data-action="openPortal">Számlázás kezelése</button>`}
+      ${demo && s.state !== 'expired' && html`<button class="btn" data-action="renewMine">Megújítás +30 nap (teszt)</button>`}
+    </div>
+    ${s.state === 'active' && html`<p class="muted" style="margin:14px 0 0;font-size:.88rem">Másik csomagra váltáshoz előbb mondd le a jelenlegit, utána választhatsz újat.</p>`}`
     : html`<p class="muted">Még nincs előfizetésed.</p><a class="btn primary" href="#/plans">Csomag választása</a>`;
 
   return page(html`
@@ -1019,6 +1166,10 @@ forms.password = async (data, form) => {
   toast('A jelszó megváltozott.');
 };
 Object.assign(actions, {
+  async openPortal() {
+    const res = await api('/billing/portal', { method: 'POST' });
+    location.href = res.url; // a Stripe számlázási portál (kártya módosítása, számlák)
+  },
   async renewMine() {
     const res = await api('/subscription/renew', { method: 'POST' });
     state.sub = res.subscription;
@@ -1026,7 +1177,7 @@ Object.assign(actions, {
     refresh();
   },
   async cancelMine() {
-    if (!(await confirmDialog('Biztosan lemondod? A már kifizetett időszak végéig még nézheted a tartalmakat.', { okLabel: 'Lemondás', danger: true }))) return;
+    if (!(await confirmDialog('Biztosan lemondod? A már kifizetett időszak végéig még nézheted a tartalmakat, utána az előfizetés nem újul meg és nem terheljük a kártyádat.', { okLabel: 'Lemondás', danger: true }))) return;
     const res = await api('/subscription/cancel', { method: 'POST' });
     state.sub = res.subscription;
     toast('Az előfizetés lemondva.');
@@ -1062,7 +1213,12 @@ const stat = (label, value, sub) => html`<div class="card stat"><div class="labe
 async function adminOverview(s) {
   const max = Math.max(1, ...s.byPlan.map((p) => p.count));
   const tlsDays = s.tlsExpiresAt ? Math.ceil((s.tlsExpiresAt - Date.now()) / 86_400_000) : null;
+  const payBanner = (kind, title, text) => html`<div class="banner" role="${kind === 'bad' ? 'alert' : 'status'}"><div><strong>${title}</strong><div class="muted">${text}</div></div></div>`;
   return html`
+    ${s.payments === 'off' && payBanner('bad', 'A bankkártyás fizetés nincs beállítva.', 'A felhasználók most nem tudnak előfizetni. Add meg a STRIPE_SECRET_KEY értékét a szerver .env fájljában (lásd STRIPE.md).')}
+    ${s.payments === 'demo' && payBanner('bad', 'FIGYELEM: a DEMO_PAYMENTS be van kapcsolva.', 'Bárki ingyen előfizethet! Ez csak tesztelésre való, éles oldalon kapcsold ki.')}
+    ${s.payments === 'stripe' && s.stripeMode === 'test' && payBanner('warn', 'Stripe TESZT mód.', 'A fizetések nem valódiak (teszt kártyák). Éles működéshez sk_live_ kulcs kell.')}
+    ${s.payments === 'stripe' && s.stripeMode === 'live' && !s.stripeWebhook && payBanner('warn', 'A Stripe webhook nincs beállítva.', 'Az előfizetések állapota így is frissül (amikor a felhasználó használja az oldalt), de webhookkal azonnali. Lásd STRIPE.md.')}
     ${tlsDays !== null && tlsDays <= 21 && html`<div class="banner" role="alert">
       <div><strong>${tlsDays > 0 ? `A HTTPS tanúsítvány ${tlsDays} nap múlva lejár.` : 'A HTTPS tanúsítvány lejárt!'}</strong>
         <div class="muted">Futtasd újra a <code>tools/get-cert/get-cert.bat</code> fájlt a gépeden, és töltsd fel az új <code>tls</code> mappát a szerverre. Újraindítás nem kell.</div></div>
@@ -1150,13 +1306,15 @@ async function adminSubs() {
       <thead><tr><th>Felhasználó</th><th>Csomag</th><th>Állapot</th><th>Kezdete</th><th>Lejárat</th><th></th></tr></thead>
       <tbody>${A.subs.map((s) => html`<tr>
         <td><strong>${s.user_name}</strong><br><span class="muted">${s.email}</span></td>
-        <td>${s.plan_name}</td>
+        <td>${s.plan_name} ${s.stripe && html`<span class="badge info" title="Bankkártyás előfizetés, a Stripe kezeli">Stripe</span>`}</td>
         <td>${stateBadge(s.state)}</td>
         <td>${fmtDateShort(s.started_at)}</td>
         <td>${fmtDateShort(s.expires_at)}</td>
         <td class="actions">
-          <button class="btn sm primary" data-action="subRenew" data-id="${s.id}">Megújítás</button>
-          <button class="btn sm" data-action="subEdit" data-id="${s.id}">Szerkesztés</button>
+          ${s.stripe && s.state !== 'expired'
+            ? html`<span class="muted" style="font-size:.82rem" title="Időt adni, csomagot cserélni és lejáratot módosítani csak az admin által adott előfizetésnél lehet">A Stripe kezeli</span>`
+            : html`<button class="btn sm primary" data-action="subRenew" data-id="${s.id}">Megújítás</button>
+          <button class="btn sm" data-action="subEdit" data-id="${s.id}">Szerkesztés</button>`}
           ${s.state !== 'expired' && html`<button class="btn sm danger" data-action="subEnd" data-id="${s.id}">Megszüntetés</button>`}
           <button class="btn sm danger" data-action="subDelete" data-id="${s.id}">Törlés</button>
         </td></tr>`)}</tbody></table></div>` : emptyBox('Nincs a szűrésnek megfelelő előfizetés.')}`;
@@ -1241,7 +1399,7 @@ async function adminPlans() {
         <div class="row between"><h2 style="margin:0">${p.name}</h2>${p.active ? '' : html`<span class="badge none">Rejtett</span>`}</div>
         <div class="price">${fmtMoney(p.price)}<small> / hó</small></div>
         <p class="muted">${p.description}</p>
-        <ul><li>${p.quality}</li><li>${p.screens} képernyő</li><li>${p.subscribers} előfizető</li></ul>
+        <ul><li>Legfeljebb ${QUALITY_FULL[p.max_quality] || p.quality}</li><li>${p.screens} egyidejű képernyő</li><li>${p.subscribers} előfizető</li></ul>
         <div class="row">
           <button class="btn sm" data-action="planEdit" data-id="${p.id}">Szerkesztés</button>
           <button class="btn sm danger" data-action="planDelete" data-id="${p.id}">Törlés</button>
@@ -1251,9 +1409,11 @@ async function adminPlans() {
 
 const planFields = (p = {}) => [
   { name: 'name', label: 'Név', value: p.name, max: 40 },
-  { name: 'price', label: 'Havi ár (Ft)', type: 'number', value: p.price ?? 1990, min: 0, max: 1000000 },
-  { name: 'quality', label: 'Minőség', value: p.quality ?? 'Full HD (1080p)' },
-  { name: 'screens', label: 'Egyidejű képernyők', type: 'number', value: p.screens ?? 1, min: 1, max: 20 },
+  { name: 'price', label: 'Havi ár (Ft)', type: 'number', value: p.price ?? 1990, min: 175, max: 1000000, hint: 'Legalább 175 Ft (a Stripe minimuma). Áremelésnél a már meglévő előfizetők a régi áron maradnak, az új ár az új vásárlókra vonatkozik.' },
+  { name: 'max_quality', label: 'Legjobb videóminőség', type: 'select', value: p.max_quality ?? 1080,
+    options: [{ value: 720, label: 'HD (720p)' }, { value: 1080, label: 'Full HD (1080p)' }, { value: 2160, label: 'Ultra HD (4K)' }],
+    hint: 'Ennél jobb minőségű változatot a csomag nem kap meg: az ilyen videók linkje ki sem megy a szerverről.' },
+  { name: 'screens', label: 'Egyidejű képernyők', type: 'number', value: p.screens ?? 1, min: 1, max: 20, hint: 'Ennyi eszközön nézhet egyszerre az előfizető.' },
   { name: 'description', label: 'Leírás', type: 'textarea', value: p.description, required: false, max: 200 },
   { name: 'active', label: 'Elérhető új előfizetőknek', type: 'checkbox', value: p.active ?? true },
 ];
@@ -1305,6 +1465,17 @@ const AGE_OPTIONS = [[0, 'Korhatár nélkül'], [6, '6 éves kortól'], [12, '12
   .map(([value, label]) => ({ value, label }));
 const VIDEO_HINT = 'Videa, YouTube vagy Vimeo link, közvetlen .mp4/.webm link – vagy tölts fel videófájlt (mp4, m4v, webm, ogv).';
 
+// Egy videó három minőségi változata. A csomag pontosan azt kapja, ami a szintjéhez tartozik:
+// Alap: az alap változat, Standard: Full HD (ha van), Prémium: 4K (ha van).
+const videoFields = (v = {}, showIf, extraHint = '') => [
+  { name: 'video_url', label: 'Videó – alap változat (720p vagy alacsonyabb)', type: 'video', value: v.video_url, showIf,
+    hint: `${VIDEO_HINT} Ezt kapja minden csomag, az Alap is. ${extraHint}` },
+  { name: 'video_url_1080', label: 'Videó – Full HD (1080p) változat (nem kötelező)', type: 'video', value: v.video_url_1080, showIf,
+    hint: 'Ezt a Standard és a Prémium csomag kapja. Ha üres, ők is az alap változatot látják.' },
+  { name: 'video_url_2160', label: 'Videó – 4K változat (nem kötelező)', type: 'video', value: v.video_url_2160, showIf,
+    hint: 'Ezt csak a Prémium csomag kapja. Ha üres, a Prémium a Full HD (vagy az alap) változatot látja.' },
+];
+
 const titleFields = (t = {}) => [
   { name: 'type', label: 'Típus', type: 'select', value: t.type ?? 'movie', options: [{ value: 'movie', label: 'Film' }, { value: 'series', label: 'Sorozat' }] },
   { name: 'title', label: 'Cím', value: t.title },
@@ -1315,7 +1486,7 @@ const titleFields = (t = {}) => [
   { name: 'rating', label: 'Értékelés (0–10)', type: 'number', step: '0.1', value: t.rating ?? 7, min: 0, max: 10 },
   { name: 'hue', label: 'Borító színárnyalata (0–359)', type: 'number', value: t.hue ?? Math.floor(Math.random() * 360), min: 0, max: 359 },
   { name: 'duration_min', label: 'Hossz (perc)', type: 'number', value: t.duration_min ?? 90, min: 1, max: 1000, showIf: { name: 'type', value: 'movie' } },
-  { name: 'video_url', label: 'Videó (link vagy fájl)', type: 'video', value: t.video_url, showIf: { name: 'type', value: 'movie' }, hint: `${VIDEO_HINT} Sorozatnál az epizódoknál adod meg.` },
+  ...videoFields(t, { name: 'type', value: 'movie' }, 'Sorozatnál az epizódoknál adod meg a videókat.'),
   { name: 'featured', label: 'Kiemelt a főoldalon', type: 'checkbox', value: !!t.featured },
 ];
 
@@ -1368,7 +1539,7 @@ Object.assign(actions, {
         { name: 'season', label: 'Évad', type: 'number', value: 1, min: 1, max: 100 },
         { name: 'number', label: 'Epizód sorszáma', type: 'number', value: next, min: 1, max: 1000 },
         { name: 'name', label: 'Cím' },
-        { name: 'video_url', label: 'Videó (link vagy fájl)', type: 'video', hint: VIDEO_HINT },
+        ...videoFields(),
       ],
       async onSubmit(v) {
         await api(`/admin/titles/${titleId}/episodes`, { method: 'POST', body: v });
@@ -1387,7 +1558,7 @@ async function openEpisodes(titleId) {
     <h2>Epizódok: ${t ? t.title : ''}</h2>
     ${eps.length ? html`<div class="table-wrap"><table>
       <thead><tr><th>#</th><th>Cím</th><th>Videó</th><th></th></tr></thead>
-      <tbody>${eps.map((e) => html`<tr><td>${e.season}×${e.number}</td><td>${e.name}</td><td class="muted">${videoLabel(e.video_url)}</td>
+      <tbody>${eps.map((e) => html`<tr><td>${e.season}×${e.number}</td><td>${e.name}</td><td class="muted">${videoLabel(e.video_url)}<br><small>${['720p', e.video_url_1080 && '1080p', e.video_url_2160 && '4K'].filter(Boolean).join(' · ')}</small></td>
         <td class="actions"><button class="btn sm danger" data-action="episodeDelete" data-id="${e.id}" data-title="${titleId}">Törlés</button></td></tr>`)}</tbody>
     </table></div>` : emptyBox('Még nincs epizód.')}
     <div class="modal-actions" style="margin-top:16px">
