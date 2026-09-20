@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import db, { tx, seed } from './db.js';
 import { hashPassword, verifyPassword, verifyDummy, hashToken, newToken } from './security.js';
 import * as billing from './billing.js';
-import { issueInvoice, sellerConfigured, sellerConfig } from './invoices.js';
+import { issueInvoice, sellerConfigured, sellerConfig, legalConfig, saveSettings } from './invoices.js';
 import { renderInvoicePdf } from './invoice-pdf.js';
 
 // Pterodactyl panelen a kiosztott portot a SERVER_PORT változó adja
@@ -455,15 +455,15 @@ function recordConsent(userId, kind, planId = null) {
 }
 
 // A jogi oldalak (ÁSZF, adatkezelés, impresszum) a szolgáltató adataival töltődnek ki; ezeket a .env adja
+// (az adatok az admin panel „Cégadatok” fülén adhatók meg; tartalék: .env)
 app.get('/api/legal', (req, res) => {
-  const s = sellerConfig();
-  const e = (k) => (process.env[k] || '').trim();
+  const c = legalConfig();
   res.json({
     version: LEGAL_VERSION,
-    name: s.name, address: s.address, taxId: s.taxId, email: s.email,
-    phone: e('SELLER_PHONE'), regNumber: e('SELLER_REG_NUMBER'), regLabel: e('SELLER_REG_LABEL'),
-    hostingName: e('HOSTING_NAME'), hostingAddress: e('HOSTING_ADDRESS'), hostingEmail: e('HOSTING_EMAIL'),
-    siteUrl: e('SITE_URL') || 'https://impix.hu',
+    name: c.name, address: c.address, taxId: c.taxId, email: c.email,
+    phone: c.phone, regNumber: c.regNumber, regLabel: c.regLabel,
+    hostingName: c.hostingName, hostingAddress: c.hostingAddress, hostingEmail: c.hostingEmail,
+    siteUrl: (process.env.SITE_URL || '').trim() || 'https://impix.hu',
   });
 });
 
@@ -852,6 +852,7 @@ admin.get('/stats', (req, res) => {
     payments: paymentsMode(),
     invoiceConfigured: sellerConfigured(), // az eladó adatai (név, cím, adószám) meg vannak-e adva a számlákhoz
     invoiceVatRate: sellerConfig().vatRate,
+    legalMissing: LEGAL_REQUIRED.filter(([k]) => !legalConfig()[k]).map(([, label]) => label), // a jogi oldalakhoz még hiányzó adatok
     stripeMode: billing.mode, // 'test', 'live' vagy null
     stripeWebhook: !!process.env.STRIPE_WEBHOOK_SECRET,
     byPlan: db.prepare(`
@@ -1061,6 +1062,35 @@ admin.delete('/plans/:id', (req, res) => {
   res.json({ deleted: true });
 });
 
+
+// Szolgáltatói (cég)adatok: az ÁSZF, az adatkezelési tájékoztató, az impresszum és a számlák ezekből töltődnek ki.
+// Az űrlap a jelenleg érvényes értékeket mutatja (mentett adat, ennek hiányában a .env).
+const LEGAL_REQUIRED = [['name', 'a szolgáltató neve'], ['address', 'székhely'], ['taxId', 'adószám'], ['email', 'e-mail cím'], ['phone', 'telefonszám'],
+  ['regNumber', 'nyilvántartási szám'], ['hostingName', 'tárhelyszolgáltató neve'], ['hostingAddress', 'tárhelyszolgáltató címe'], ['hostingEmail', 'tárhelyszolgáltató e-mail címe']];
+admin.get('/settings', (req, res) => res.json(legalConfig()));
+admin.put('/settings', (req, res) => {
+  const b = req.body || {};
+  const text = (k, name, max) => {
+    const v = b[k] === undefined || b[k] === null ? '' : String(b[k]).trim();
+    if (v.length > max) fail(`${name}: legfeljebb ${max} karakter lehet.`);
+    return v;
+  };
+  const mail = (k, name) => {
+    const v = text(k, name, 120);
+    if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) fail(`${name}: érvénytelen e-mail cím.`);
+    return v;
+  };
+  const rate = b.vatRate === undefined || b.vatRate === null || b.vatRate === '' ? '' : String(int(b.vatRate, 'ÁFA kulcs', 0, 27));
+  saveSettings({
+    name: text('name', 'A szolgáltató neve', 120), address: text('address', 'Székhely', 200), taxId: text('taxId', 'Adószám', 40),
+    email: mail('email', 'E-mail cím'), phone: text('phone', 'Telefonszám', 40),
+    regNumber: text('regNumber', 'Nyilvántartási szám', 60), regLabel: text('regLabel', 'Nyilvántartási szám megnevezése', 60),
+    hostingName: text('hostingName', 'Tárhelyszolgáltató neve', 120), hostingAddress: text('hostingAddress', 'Tárhelyszolgáltató címe', 200),
+    hostingEmail: mail('hostingEmail', 'Tárhelyszolgáltató e-mail címe'),
+    vatRate: rate, vatNote: text('vatNote', 'ÁFA megjegyzés', 200),
+  });
+  res.json(legalConfig());
+});
 
 // Videófeltöltés: nyers fájltörzs (PUT), streamelve a lemezre. Nincs memóriában pufferelés.
 admin.put('/upload', async (req, res) => {

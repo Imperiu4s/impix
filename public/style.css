@@ -350,6 +350,8 @@ td.actions .btn { margin-left: 4px; }
 .toast.error { border-left-color: var(--danger); }
 @keyframes pop { from { opacity: 0; transform: translateY(8px); } }
 
+.grid-2 .field.wide { grid-column: 1 / -1; }
+.settings-form .card + .card { margin-top: 0; }
 .grid-2 .field:has(textarea), .grid-2 .field.check, .grid-2 .field:has(.upload-row) { grid-column: 1 / -1; }
 
 /* Kedvencek */

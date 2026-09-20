@@ -177,6 +177,8 @@ for (const table of ['titles', 'episodes']) {
 
 // Borítókép (feltöltött fájl neve a covers/ mappában; ha nincs, a `hue` színárnyalatból készül háttér)
 addColumn('titles', 'poster', 'TEXT');
+// Az admin panelen megadott szolgáltatói (cég)adatok: kulcs-érték párok (ÁSZF, impresszum, számlák)
+db.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 // Elfogadott feltételek naplója (ÁSZF és adatkezelési tájékoztató elfogadása regisztrációkor, a digitális szolgáltatás
 // azonnali megkezdésére adott hozzájárulás vásárláskor). Bizonyíthatóság: ki, mit, mikor, a szöveg melyik változatára.
 db.exec(`CREATE TABLE IF NOT EXISTS consents (

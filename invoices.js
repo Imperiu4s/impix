@@ -1,22 +1,59 @@
 // Számlák kiállítása. A számla a kifizetett előfizetési díjról készül, sorszámozva, és utólag nem módosul.
 //
-// Az eladó adatai a környezeti változókból (.env) jönnek, és kiállításkor pillanatképként a számlához mentődnek:
-//   SELLER_NAME, SELLER_ADDRESS, SELLER_TAX_ID (adószám), SELLER_EMAIL, SELLER_VAT_RATE (%, alap: 27),
-//   SELLER_VAT_NOTE (pl. alanyi adómentesség szövege), INVOICE_PREFIX (alap: IMPIX)
+// A szolgáltató (eladó) adatai. Az admin panel „Cégadatok” fülén adhatók meg (az adatbázisba mentődnek, a `settings` táblába),
+// tartalékként a környezeti változók (.env) szolgálnak: SELLER_NAME, SELLER_ADDRESS, SELLER_TAX_ID (adószám), SELLER_EMAIL,
+// SELLER_PHONE, SELLER_REG_NUMBER, SELLER_REG_LABEL, HOSTING_NAME, HOSTING_ADDRESS, HOSTING_EMAIL, SELLER_VAT_RATE (%, alap: 27),
+// SELLER_VAT_NOTE (pl. alanyi adómentesség szövege). INVOICE_PREFIX (alap: IMPIX) csak .env-ből állítható.
+// A számla kiállításkor pillanatképként tárolja az eladó adatait.
 import db, { tx } from './db.js';
 
 const env = (k, d = '') => (process.env[k] ?? d).trim();
 
+const ENV_KEYS = {
+  name: 'SELLER_NAME', address: 'SELLER_ADDRESS', taxId: 'SELLER_TAX_ID', email: 'SELLER_EMAIL', phone: 'SELLER_PHONE',
+  regNumber: 'SELLER_REG_NUMBER', regLabel: 'SELLER_REG_LABEL',
+  hostingName: 'HOSTING_NAME', hostingAddress: 'HOSTING_ADDRESS', hostingEmail: 'HOSTING_EMAIL',
+  vatRate: 'SELLER_VAT_RATE', vatNote: 'SELLER_VAT_NOTE',
+};
+export const SETTING_KEYS = Object.keys(ENV_KEYS);
+
+function storedSettings() {
+  const out = {};
+  for (const r of db.prepare('SELECT key, value FROM settings').all()) out[r.key] = r.value;
+  return out;
+}
+// Az admin panelen mentett érték; ha nincs, a .env
+const pick = (stored, key) => (stored[key] ?? '').trim() || env(ENV_KEYS[key]);
+
+// Minden szolgáltatói adat szövegként (a jogi oldalak és az admin űrlap használja)
+export function legalConfig() {
+  const s = storedSettings();
+  return Object.fromEntries(SETTING_KEYS.map((k) => [k, pick(s, k)]));
+}
+
+// Mentés az admin panelről: az üres érték törli a mentett adatot (ilyenkor a .env tartaléka él)
+export function saveSettings(values) {
+  tx(() => {
+    for (const k of SETTING_KEYS) {
+      if (!(k in values)) continue;
+      const v = String(values[k] ?? '').trim();
+      if (v) db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, v);
+      else db.prepare('DELETE FROM settings WHERE key = ?').run(k);
+    }
+  });
+}
+
 export function sellerConfig() {
-  const rate = Number(env('SELLER_VAT_RATE', '27'));
+  const s = storedSettings();
+  const rate = Number(pick(s, 'vatRate') || '27');
   const vatRate = Number.isFinite(rate) && rate >= 0 && rate <= 27 ? Math.round(rate) : 27;
   return {
-    name: env('SELLER_NAME'),
-    address: env('SELLER_ADDRESS'),
-    taxId: env('SELLER_TAX_ID'),
-    email: env('SELLER_EMAIL'),
+    name: pick(s, 'name'),
+    address: pick(s, 'address'),
+    taxId: pick(s, 'taxId'),
+    email: pick(s, 'email'),
     vatRate,
-    vatNote: env('SELLER_VAT_NOTE') || (vatRate === 0 ? 'Alanyi adómentes' : ''),
+    vatNote: pick(s, 'vatNote') || (vatRate === 0 ? 'Alanyi adómentes' : ''),
     prefix: env('INVOICE_PREFIX', 'IMPIX').replace(/[^A-Za-z0-9]/g, '').slice(0, 12) || 'IMPIX',
   };
 }

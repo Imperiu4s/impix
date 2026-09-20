@@ -61,8 +61,7 @@ számlák megtekintését. Teszt és éles módban külön kell beállítani.
 
 ### 5. Feltöltés a szerverre
 A következő fájlokat töltsd fel: `server.js`, `db.js`, `billing.js`, `invoices.js` (új), `invoice-pdf.js` (új), a **`fonts/` mappa**
-(új: a számla PDF-jéhez kell, a magyar ékezetek miatt), `package.json`, `package-lock.json`, `public/` és a `.env` (a fentiekkel és a
-`SELLER_*` számlázási adatokkal bővítve). A Pterodactyl induláskor lefuttatja az `npm install`-t, így a `stripe` csomag magától telepszik.
+(új: a számla PDF-jéhez kell, a magyar ékezetek miatt), `package.json`, `package-lock.json`, `public/` és a `.env` (a fentiekkel bővítve; a számlázási adatokat az admin panelen add meg). A Pterodactyl induláskor lefuttatja az `npm install`-t, így a `stripe` csomag magától telepszik.
 Az adatbázis (`data/`) a következő indításkor **magától átalakul**, a meglévő adataid megmaradnak.
 
 ## Kipróbálás teszt módban
@@ -107,13 +106,13 @@ sorok mellett). Nem kell e-mailt küldeni.
 
 - **Sorszám:** `IMPIX-2026-000001`, évente újraindul, folyamatos, hézag nélkül.
 - **Vevő:** a Stripe fizetési oldalán megadott számlázási név és cím (a Stripe kötelezően bekéri).
-- **Eladó:** a `.env` fájl `SELLER_*` értékeiből (név, cím, adószám, e-mail, ÁFA kulcs); kiállításkor a számla **pillanatképként
+- **Eladó:** az admin panel **Cégadatok** fülén megadott adatokból (név, cím, adószám, e-mail, ÁFA kulcs; tartalék: a `.env` `SELLER_*` értékei); kiállításkor a számla **pillanatképként
   tárolja**, ezért utólag sem változik, ha később módosítod az adataidat.
-- **ÁFA:** a bruttó (a vevő által fizetett) árból számolva, alapértelmezetten 27%. Alanyi adómentesség esetén `SELLER_VAT_RATE=0`.
+- **ÁFA:** a bruttó (a vevő által fizetett) árból számolva, alapértelmezetten 27%. Alanyi adómentesség esetén a Cégadatok fülön 0 (vagy `SELLER_VAT_RATE=0`).
 - **Megőrzés:** a számlák a felhasználó törlése után is megmaradnak az adatbázisban (a számlákat jogszabály szerint meg kell őrizni).
 - **Admin:** az admin panel **Számlák** fülén minden számla látható és letölthető (könyveléshez), kereshető sorszám vagy vevő szerint.
 - **Ingyenes tételek** (admin által adott előfizetés) után nem készül számla.
-- Ha a `SELLER_*` adatok hiányoznak, az admin panelen figyelmeztetés jelenik meg, a számlán pedig „Az eladó adatai nincsenek megadva”.
+- Ha a cégadatok hiányoznak, az admin panelen figyelmeztetés jelenik meg, a számlán pedig „Az eladó adatai nincsenek megadva”.
 
 > **FONTOS, ez nem jogi tanács.** Az Impix számla-jellegű PDF-et állít elő a tranzakcióról. Hogy ez **megfelel-e a magyar számlázási
 > szabályoknak**, az az eladó adózási helyzetétől függ: pl. a **NAV online számla adatszolgáltatás** (a számlát a kiállításkor be kell

@@ -36,10 +36,10 @@ Környezeti változók:
 | `STRIPE_SECRET_KEY` | Stripe titkos kulcs (bankkártyás fizetés, lásd [STRIPE.md](STRIPE.md)) |
 | `STRIPE_WEBHOOK_SECRET` | a Stripe webhook aláíró titka (`whsec_…`) |
 | `SITE_URL` | a weboldal címe (ide tér vissza a felhasználó a fizetés után), pl. `https://impix.hu` |
-| `SELLER_NAME`, `SELLER_ADDRESS`, `SELLER_TAX_ID`, `SELLER_EMAIL` | az eladó adatai a számlákon |
+| `SELLER_NAME`, `SELLER_ADDRESS`, `SELLER_TAX_ID`, `SELLER_EMAIL` | **nem kötelező**: a szolgáltató adatait az admin panel "Cégadatok" fülén kell megadni; ezek csak tartalékként szolgálnak |
 | `SELLER_VAT_RATE` | ÁFA kulcs % (alap: 27; alanyi adómentesség: 0), `SELLER_VAT_NOTE`: megjegyzés a számlán |
 | `INVOICE_PREFIX` | a számla sorszámának előtagja (alap: `IMPIX`) |
-| `SELLER_PHONE`, `SELLER_REG_NUMBER`, `SELLER_REG_LABEL`, `HOSTING_NAME`, `HOSTING_ADDRESS`, `HOSTING_EMAIL` | a jogi oldalak (ÁSZF, Adatkezelési tájékoztató, Impresszum) szolgáltatói adatai; a `SELLER_NAME/ADDRESS/TAX_ID/EMAIL` is ide kerül |
+| `SELLER_PHONE`, `SELLER_REG_NUMBER`, `SELLER_REG_LABEL`, `HOSTING_NAME`, `HOSTING_ADDRESS`, `HOSTING_EMAIL` | ugyanez (tartalék): a jogi oldalak és számlák szolgáltatói adatai |
 | `DEMO_PAYMENTS=1` | csak teszteléshez: ingyenes előfizetés Stripe nélkül (élesen tilos) |
 | `MEDIA_SECRET` | feltöltött videólinkek aláírásához (alapból a `data/media.key` fájlba generálódik) |
 | `TRUST_PROXY` | reverse proxy mögött állítsd `1`-re (HTTPS felismerés, kliens IP) |
@@ -90,7 +90,7 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
 - Előfizetés **bankkártyával (Stripe)**, havi automatikus megújulással, lemondás, számlázási portál. Aktív előfizetés mellett
   csomagot váltani nem lehet, előbb le kell mondani ([STRIPE.md](STRIPE.md))
 - **Számla letöltése**: minden kifizetett előfizetési díjról sorszámozott számla-PDF készül, amit a felhasználó a Fiók oldalon tölthet le
-  (nem kell e-mail). Az admin panel „Számlák” fülén könyveléshez minden számla látható. Az eladó adatait a `SELLER_*` beállítások adják;
+  (nem kell e-mail). Az admin panel „Számlák” fülén könyveléshez minden számla látható. Az eladó adatait az admin panel "Cégadatok" füle adja;
   a jogi megfelelésről lásd a [STRIPE.md](STRIPE.md) „Számlák” részét.
 - **Tiszta címek**: `impix.hu`, `impix.hu/plans` (nem `impix.hu/#/plans`); a régi `#/` címek is működnek
 - A csomag **tényleg azt adja, ami benne van**: Alap 720p / 1 képernyő, Standard 1080p / 2 képernyő, Prémium 4K / 4 képernyő
@@ -98,7 +98,7 @@ Ha az oldalt és az API-t ugyanaz a szerver szolgálja ki (helyi fejlesztés), a
 - Katalógus (filmek, sorozatok, keresés, műfajszűrés), lejátszó, sorozatoknál automatikus következő epizód
 - A videó csak érvényes előfizetéssel érhető el (a szerver adja ki a címet, a katalógus nem tartalmazza)
 - **Jogi oldalak**: ÁSZF (`/terms`), Adatkezelési tájékoztató (`/privacy`) és Impresszum (`/imprint`), lábléc-hivatkozásokkal. A szövegek a
-  `public/legal.js` fájlban vannak, a szolgáltató adataival a szerver `/api/legal` végpontja (`.env`) tölti ki őket. **Sablonok, nem jogi tanács:**
+  `public/legal.js` fájlban vannak, a szolgáltató adataival a szerver `/api/legal` végpontja tölti ki őket (az adatokat az admin panel **Cégadatok** fülén kell megadni, nem kell hozzá `.env`). **Sablonok, nem jogi tanács:**
   éles használat előtt jogásszal és a könyvelővel át kell nézetni. Regisztrációkor az ÁSZF és az adatkezelés elfogadása, vásárláskor a
   szolgáltatás azonnali megkezdésére és az elállási jog elvesztésére vonatkozó nyilatkozat kötelező; mindkettő naplózódik (`consents` tábla, a szövegek változatával)
 - **Admin lejárat-észlelés**: ha az admin törli vagy megszünteti egy felhasználó előfizetését, a felhasználó legfeljebb ~8 másodpercen belül

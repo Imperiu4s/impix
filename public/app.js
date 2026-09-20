@@ -811,7 +811,8 @@ async function legalPage({ doc }) {
       <p class="legal-lead">${d.lead}</p>
       <p class="muted legal-meta">Hatályos: ${info.version || ''}</p>
       ${incomplete && html`<div class="banner"><div><strong>Admin figyelmeztetés: a szolgáltató adatai még nincsenek megadva.</strong>
-        <div class="muted">A hiányzó részeket „[hiányzó adat]” jelzi. Add meg a szerver <code>.env</code> fájljában: SELLER_NAME, SELLER_ADDRESS, SELLER_TAX_ID, SELLER_EMAIL, SELLER_PHONE, SELLER_REG_NUMBER, HOSTING_NAME, HOSTING_ADDRESS, HOSTING_EMAIL. Az oldal kitöltés után magától frissül.</div></div></div>`}
+        <div class="muted">A hiányzó részeket „[hiányzó adat]” jelzi. Töltsd ki az Admin panel „Cégadatok” fülén, a szöveg azonnal frissül.</div></div>
+        <a class="btn primary" href="/admin/settings">Cégadatok</a></div>`}
       ${d.sections.length > 6 && html`<nav class="legal-toc card" aria-label="Tartalomjegyzék"><strong>Tartalom</strong>
         <ol>${d.sections.map((s, i) => html`<li><button type="button" class="link-btn" data-action="legalJump" data-id="legal-${i}">${s.h.replace(/^\d+\.\s*/, '')}</button></li>`)}</ol></nav>`}
       ${d.sections.map((s, i) => html`
@@ -1484,7 +1485,7 @@ Object.assign(actions, {
 //  Admin panel
 // ==========================================================
 
-const adminTabs = [['overview', 'Áttekintés'], ['users', 'Felhasználók'], ['subs', 'Előfizetések'], ['invoices', 'Számlák'], ['plans', 'Csomagok'], ['content', 'Tartalmak'], ['recs', 'Ajánlások']];
+const adminTabs = [['overview', 'Áttekintés'], ['users', 'Felhasználók'], ['subs', 'Előfizetések'], ['invoices', 'Számlák'], ['plans', 'Csomagok'], ['content', 'Tartalmak'], ['recs', 'Ajánlások'], ['settings', 'Cégadatok']];
 const A = { users: [], subs: [], plans: [], titles: [], recs: [], invoices: [], userQ: '', subQ: '', subState: '', recState: '', invQ: '' };
 const findBy = (list, id) => list.find((x) => x.id === Number(id));
 
@@ -1492,7 +1493,7 @@ async function adminPage({ tab }) {
   tab = adminTabs.some(([k]) => k === tab) ? tab : 'overview';
   const stats = await api('/admin/stats');
   state.newRecs = stats.newRecommendations;
-  const body = await ({ overview: () => adminOverview(stats), users: adminUsers, subs: adminSubs, invoices: adminInvoices, plans: adminPlans, content: adminContent, recs: adminRecs })[tab]();
+  const body = await ({ overview: () => adminOverview(stats), users: adminUsers, subs: adminSubs, invoices: adminInvoices, plans: adminPlans, content: adminContent, recs: adminRecs, settings: adminSettings })[tab]();
   return page(html`
     <div class="page">
       <h1 class="page-title">Admin panel</h1>
@@ -1510,7 +1511,9 @@ async function adminOverview(s) {
   const tlsDays = s.tlsExpiresAt ? Math.ceil((s.tlsExpiresAt - Date.now()) / 86_400_000) : null;
   const payBanner = (kind, title, text) => html`<div class="banner" role="${kind === 'bad' ? 'alert' : 'status'}"><div><strong>${title}</strong><div class="muted">${text}</div></div></div>`;
   return html`
-    ${!s.invoiceConfigured && payBanner('warn', 'A számlázási adatok hiányosak.', 'A számlákon nem szerepel az eladó neve, címe és adószáma. Add meg a SELLER_NAME, SELLER_ADDRESS és SELLER_TAX_ID értékét a szerver .env fájljában (lásd STRIPE.md).')}
+    ${s.legalMissing.length > 0 && html`<div class="banner" role="status"><div><strong>A cégadatok hiányosak.</strong>
+      <div class="muted">Az ÁSZF, az adatkezelési tájékoztató, az impresszum és a számlák ezekből töltődnek ki. Hiányzik: ${s.legalMissing.join(', ')}.</div></div>
+      <a class="btn primary" href="/admin/settings">Kitöltöm</a></div>`}
     ${s.payments === 'off' && payBanner('bad', 'A bankkártyás fizetés nincs beállítva.', 'A felhasználók most nem tudnak előfizetni. Add meg a STRIPE_SECRET_KEY értékét a szerver .env fájljában (lásd STRIPE.md).')}
     ${s.payments === 'demo' && payBanner('bad', 'FIGYELEM: a DEMO_PAYMENTS be van kapcsolva.', 'Bárki ingyen előfizethet! Ez csak tesztelésre való, éles oldalon kapcsold ki.')}
     ${s.payments === 'stripe' && s.stripeMode === 'test' && payBanner('warn', 'Stripe TESZT mód.', 'A fizetések nem valódiak (teszt kártyák). Éles működéshez sk_live_ kulcs kell.')}
@@ -1903,6 +1906,58 @@ async function adminInvoices() {
       </tr>`)}</tbody></table></div>` : emptyBox('Még nincs kiállított számla.')}`;
 }
 forms.adminInvSearch = (d) => { A.invQ = (d.q || '').trim(); return refresh(); };
+
+// ----- Cégadatok (ÁSZF, adatkezelés, impresszum, számlák) -----
+
+async function adminSettings() {
+  const v = await api('/admin/settings');
+  const field = (name, label, { hint, type = 'text', placeholder = '', wide = false, max = 200 } = {}) => html`
+    <div class="field ${wide ? 'wide' : ''}"><label for="s_${name}">${label}</label>
+      <input id="s_${name}" name="${name}" type="${type}" value="${v[name] || ''}" maxlength="${max}" placeholder="${placeholder}" autocomplete="off">
+      ${hint && html`<span class="hint">${hint}</span>`}</div>`;
+  return html`
+    <form class="form settings-form" data-form="adminSettings">
+      <p class="muted">Ezek az adatok jelennek meg az <a href="/terms" style="color:var(--accent)">ÁSZF-ben</a>, az <a href="/privacy" style="color:var(--accent)">Adatkezelési tájékoztatóban</a>,
+        az <a href="/imprint" style="color:var(--accent)">Impresszumban</a> és a számlákon. Mentés után azonnal érvényesek, a szerver fájljaihoz nem kell nyúlni.
+        Egyeztess a könyvelőddel arról, hogy pontosan mit kell szerepeltetni.</p>
+      <div class="card">
+        <h2>A szolgáltató (üzemeltető) adatai</h2>
+        <div class="grid-2">
+          ${field('name', 'Név / cégnév', { placeholder: 'pl. Minta Kft. vagy Minta János e.v.', max: 120 })}
+          ${field('taxId', 'Adószám', { placeholder: '12345678-1-42', max: 40 })}
+          ${field('address', 'Székhely / levelezési cím', { placeholder: '1111 Budapest, Minta utca 1.', wide: true })}
+          ${field('regNumber', 'Nyilvántartási szám', { hint: 'Cégjegyzékszám (cég) vagy egyéni vállalkozói nyilvántartási szám.', max: 60 })}
+          ${field('regLabel', 'A szám megnevezése', { hint: 'Pl. „cégjegyzékszám” vagy „egyéni vállalkozói nyilvántartási szám”. Ha üres, mindkettő szerepel.', max: 60 })}
+          ${field('email', 'E-mail cím', { type: 'email', hint: 'Ügyfélszolgálat, adatvédelmi kérelmek, panaszok.', max: 120 })}
+          ${field('phone', 'Telefonszám', { placeholder: '+36 30 123 4567', max: 40 })}
+        </div>
+      </div>
+      <div class="card">
+        <h2>Tárhelyszolgáltató</h2>
+        <p class="muted">Az a cég, amelynél a Node szerver (az Impix működtetése) fut. Az impresszumban és az adatkezelési tájékoztatóban kötelező feltüntetni.</p>
+        <div class="grid-2">
+          ${field('hostingName', 'Neve', { max: 120 })}
+          ${field('hostingEmail', 'E-mail címe', { type: 'email', max: 120 })}
+          ${field('hostingAddress', 'Címe', { wide: true })}
+        </div>
+      </div>
+      <div class="card">
+        <h2>Számlázás</h2>
+        <div class="grid-2">
+          ${field('vatRate', 'ÁFA kulcs (%)', { type: 'number', hint: 'Üresen hagyva 27%. Alanyi adómentesség esetén 0.', max: 2 })}
+          ${field('vatNote', 'Megjegyzés a számlán', { hint: 'Pl. alanyi adómentesség szövege. 0% esetén alapból „Alanyi adómentes”.' })}
+        </div>
+      </div>
+      <p class="form-error" role="alert"></p>
+      <div><button class="btn primary lg">Mentés</button></div>
+    </form>`;
+}
+forms.adminSettings = async (d) => {
+  await api('/admin/settings', { method: 'PUT', body: d });
+  legalInfo = null; // a jogi oldalak újratöltik az adatokat
+  toast('A cégadatok mentve.');
+  refresh();
+};
 
 // ----- Ajánlások (felhasználóktól) -----
 
